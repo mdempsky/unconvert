@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"reflect"
 	"sort"
+	"sync"
 
 	"golang.org/x/tools/go/loader"
 )
@@ -188,6 +189,7 @@ func doSub(goos, goarch string) map[string][]Edit {
 	}()
 	cmd := exec.Command("./unconvert", append([]string{"-gob"}, flag.Args()...)...)
 	cmd.Stdout = pw
+	cmd.Stderr = os.Stderr
 	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch)
 	if err := cmd.Run(); err != nil {
 		log.Fatal(err)
@@ -209,17 +211,29 @@ func computeEdits() map[string][]Edit {
 		log.Fatal(err)
 	}
 
-	m := make(map[string][]Edit)
-	var v visitor
+	type res struct { file string; edits []Edit }
+	ch := make(chan res)
+	var wg sync.WaitGroup
 	for _, pkg := range prog.InitialPackages() {
-		v.pkg = pkg
 		for _, file := range pkg.Files {
-			v.file = fset.File(file.Package)
-			ast.Walk(&v, file)
-			sort.Sort(editsByPos(v.edits))
-			m[v.file.Name()] = v.edits
-			v.edits = nil
+			wg.Add(1)
+			go func(pkg *loader.PackageInfo, file *ast.File) {
+				defer wg.Done()
+				v := visitor{pkg: pkg, file: fset.File(file.Package)}
+				ast.Walk(&v, file)
+				sort.Sort(editsByPos(v.edits))
+				ch <- res{v.file.Name(), v.edits}
+			}(pkg, file)
 		}
+	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
+
+	m := make(map[string][]Edit)
+	for r := range ch {
+		m[r.file] = r.edits
 	}
 	return m
 }
