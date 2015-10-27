@@ -74,9 +74,9 @@ func apply(file string, edits []Edit) {
 }
 
 var (
-	flagAll = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
+	flagAll   = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
 	flagApply = flag.Bool("apply", false, "apply edits")
-	flagGob = flag.Bool("gob", false, "dump edits to stdout as gob")
+	flagGob   = flag.Bool("gob", false, "dump edits to stdout as gob")
 )
 
 func main() {
@@ -217,7 +217,10 @@ func computeEdits() map[string][]Edit {
 		log.Fatal(err)
 	}
 
-	type res struct { file string; edits []Edit }
+	type res struct {
+		file  string
+		edits []Edit
+	}
 	ch := make(chan res)
 	var wg sync.WaitGroup
 	for _, pkg := range prog.InitialPackages() {
