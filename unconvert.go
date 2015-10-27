@@ -141,15 +141,22 @@ var plats = [...]struct {
 
 func mergeEdits() map[string][]Edit {
 	ch := make(chan map[string][]Edit)
+	var wg sync.WaitGroup
 	for _, plat := range plats {
+		wg.Add(1)
 		go func(goos, goarch string) {
+			defer wg.Done()
 			ch <- doSub(goos, goarch)
 		}(plat.goos, plat.goarch)
 	}
+	go func() {
+		wg.Wait()
+		close(ch)
+	}()
 
 	m := make(map[string][]Edit)
-	for range plats {
-		for f, e := range <-ch {
+	for m1 := range ch {
+		for f, e := range m1 {
 			if e0, ok := m[f]; ok {
 				m[f] = intersect(e0, e)
 			} else {
@@ -157,7 +164,6 @@ func mergeEdits() map[string][]Edit {
 			}
 		}
 	}
-
 	return m
 }
 
