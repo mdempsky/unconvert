@@ -1,4 +1,4 @@
-// Copyright 2013 The Go Authors. All rights reserved.
+// Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
@@ -267,11 +267,9 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// A real conversion.
 		return
 	}
-	if at.Value != nil {
-		// Skip conversions like uintptr(0).
-		return
-	}
-	if hasUntypedValue(call.Args[0]) {
+	if at.Value != nil || hasUntypedValue(call.Args[0]) {
+		// As a workaround for golang.org/issue/13061,
+		// skip conversions that contain an untyped value.
 		return
 	}
 
@@ -344,21 +342,23 @@ func (v *uvVisitor) Visit(node ast.Node) ast.Visitor {
 		return nil
 	}
 
-	if ident, ok := node.(*ast.Ident); ok && ident.Name == "nil" {
-		// Probably the universal untyped zero value.
-		v.found = true
-		return nil
-	}
-
-	if bin, ok := node.(*ast.BinaryExpr); ok {
-		switch bin.Op {
+	switch node := node.(type) {
+	case *ast.BinaryExpr:
+		switch node.Op {
 		case token.SHL, token.SHR, token.EQL, token.NEQ, token.LSS, token.GTR, token.LEQ, token.GEQ:
 			// Shifts yield an untyped value if their LHS is untyped.
 			// Comparisons yield an untyped boolean value.
 			v.found = true
-			return nil
+		}
+	case *ast.Ident:
+		if node.Name == "nil" {
+			// Probably the universal untyped zero value.
+			v.found = true
 		}
 	}
 
+	if v.found {
+		return nil
+	}
 	return v
 }
