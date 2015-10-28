@@ -6,19 +6,17 @@ package main
 
 import (
 	"bytes"
-	"encoding/gob"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/format"
 	"go/printer"
 	"go/token"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
-	"os/exec"
 	"reflect"
 	"sort"
 	"sync"
@@ -81,7 +79,6 @@ func apply(file string, edits []Edit) {
 var (
 	flagAll   = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
 	flagApply = flag.Bool("apply", false, "apply edits")
-	flagGob   = flag.Bool("gob", false, "dump edits to stdout as gob")
 )
 
 func main() {
@@ -91,16 +88,10 @@ func main() {
 	if *flagAll {
 		m = mergeEdits()
 	} else {
-		m = computeEdits()
+		m = computeEdits(build.Default.GOOS, build.Default.GOARCH)
 	}
 
-	if *flagGob {
-		err := gob.NewEncoder(os.Stdout).Encode(m)
-		if err != nil {
-			log.Fatal(err)
-		}
-		return
-	} else if *flagApply {
+	if *flagApply {
 		for f, e := range m {
 			apply(f, e)
 		}
@@ -151,7 +142,7 @@ func mergeEdits() map[string][]Edit {
 		wg.Add(1)
 		go func(goos, goarch string) {
 			defer wg.Done()
-			ch <- doSub(goos, goarch)
+			ch <- computeEdits(goos, goarch)
 		}(plat.goos, plat.goarch)
 	}
 	go func() {
@@ -191,29 +182,20 @@ func intersect(e1, e2 []Edit) []Edit {
 	return res
 }
 
-func doSub(goos, goarch string) map[string][]Edit {
-	var m map[string][]Edit
-	pr, pw := io.Pipe()
-	ch := make(chan error)
-	go func() {
-		ch <- gob.NewDecoder(pr).Decode(&m)
-	}()
-	cmd := exec.Command("./unconvert", append([]string{"-gob"}, flag.Args()...)...)
-	cmd.Stdout = pw
-	cmd.Stderr = os.Stderr
-	cmd.Env = append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch)
-	if err := cmd.Run(); err != nil {
-		log.Fatal(err)
-	}
-	if err := <-ch; err != nil {
-		log.Fatal(err)
-	}
-	return m
+func noImport(map[string]*types.Package, string) (*types.Package, error) {
+	panic("go/loader said this wouldn't be called")
 }
 
-func computeEdits() map[string][]Edit {
+func computeEdits(os, arch string) map[string][]Edit {
+	ctxt := build.Default
+	ctxt.GOOS = os
+	ctxt.GOARCH = arch
+	ctxt.CgoEnabled = false
+
 	var conf loader.Config
 	conf.Fset = fset
+	conf.Build = &ctxt
+	conf.TypeChecker.Import = noImport
 	for _, arg := range flag.Args() {
 		conf.Import(arg)
 	}
