@@ -24,6 +24,7 @@ import (
 	"sync"
 
 	"golang.org/x/tools/go/loader"
+	"golang.org/x/tools/go/types"
 )
 
 var fset = token.NewFileSet()
@@ -46,6 +47,8 @@ func apply(file string, edits []Edit) {
 	sort.Sort(editsByPos(edits))
 
 	// Check for overlap.
+	// TODO(mdempsky): Overlap can legally happen in bizarro expressions like
+	// "(*[unsafe.Sizeof(int8(int8(0)))]byte)(*[1]byte)(nil)".
 	for i := 1; i < len(edits); i++ {
 		if edits[i-1].End > edits[i].Pos {
 			log.Fatal("overlap")
@@ -57,10 +60,12 @@ func apply(file string, edits []Edit) {
 		log.Fatal(err)
 	}
 
-	for i := len(edits) - 1; i >= 0; i-- {
-		copy(buf[edits[i].Pos:], buf[edits[i].End:])
-		buf = buf[:len(buf)-(edits[i].End-edits[i].Pos)]
+	n := edits[0].Pos
+	for i := 1; i < len(edits); i++ {
+		n += copy(buf[n:], buf[edits[i-1].End:edits[i].Pos])
 	}
+	n += copy(buf[n:], buf[edits[len(edits)-1].End:])
+	buf = buf[:n]
 
 	buf, err = format.Source(buf)
 	if err != nil {
@@ -286,7 +291,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 	if !ok {
 		fmt.Println("Missing type for argument")
 	}
-	if ft.Type != at.Type {
+	if !types.Identical(ft.Type, at.Type) {
 		// A real conversion.
 		return
 	}
