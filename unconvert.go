@@ -17,6 +17,7 @@ import (
 	"log"
 	"os"
 	"reflect"
+	"runtime/pprof"
 	"sync"
 
 	"golang.org/x/tools/container/intsets"
@@ -95,12 +96,22 @@ func (e *editor) rewrite(f *ast.Expr) {
 }
 
 var (
-	flagAll   = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
-	flagApply = flag.Bool("apply", false, "apply edits")
+	flagAll        = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
+	flagApply      = flag.Bool("apply", false, "apply edits")
+	flagCPUProfile = flag.String("cpuprofile", "", "write cpu profile to file")
 )
 
 func main() {
 	flag.Parse()
+
+	if *flagCPUProfile != "" {
+		f, err := os.Create(*flagCPUProfile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		pprof.StartCPUProfile(f)
+		defer pprof.StopCPUProfile()
+	}
 
 	var m map[string]*intsets.Sparse
 	if *flagAll {
