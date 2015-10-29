@@ -319,15 +319,15 @@ func findExprField(a ast.Node, b ast.Expr) *ast.Expr {
 	v := reflect.ValueOf(a).Elem()
 	for i, n := 0, v.NumField(); i < n; i++ {
 		// Interesting fields are either ast.Expr or []ast.Expr.
-		switch f := v.Field(i).Interface().(type) {
-		case ast.Expr:
-			if f == b {
-				return v.Field(i).Addr().Interface().(*ast.Expr)
+		switch f := v.Field(i).Addr().Interface().(type) {
+		case *ast.Expr:
+			if *f == b {
+				return f
 			}
-		case []ast.Expr:
-			for i, e := range f {
+		case *[]ast.Expr:
+			for i, e := range *f {
 				if e == b {
-					return &f[i]
+					return &(*f)[i]
 				}
 			}
 		}
