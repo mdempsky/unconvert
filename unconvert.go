@@ -217,7 +217,6 @@ func computeEdits(os, arch string) map[string][]Edit {
 				defer wg.Done()
 				v := visitor{pkg: pkg, file: fset.File(file.Package)}
 				ast.Walk(&v, file)
-				sort.Sort(editsByPos(v.edits))
 				ch <- res{v.file.Name(), v.edits}
 			}(pkg, file)
 		}
