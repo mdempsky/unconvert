@@ -6,7 +6,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -39,8 +38,12 @@ func apply(file string, edits *intsets.Sparse) {
 		log.Fatal(err)
 	}
 
+	// Note: We modify edits during the walk.
 	v := editor{edits: edits, file: fset.File(f.Package)}
 	ast.Walk(&v, f)
+	if !edits.IsEmpty() {
+		log.Printf("%s: missing edits %s", file, edits)
+	}
 
 	// TODO(mdempsky): Write to temporary file and rename.
 	var buf bytes.Buffer
@@ -79,9 +82,16 @@ func (e *editor) Visit(n ast.Node) ast.Visitor {
 }
 
 func (e *editor) rewrite(f *ast.Expr) {
-	if n, ok := (*f).(*ast.CallExpr); ok && e.edits.Has(e.file.Offset(n.Lparen)) {
-		*f = n.Args[0]
+	n, ok := (*f).(*ast.CallExpr)
+	if !ok {
+		return
 	}
+	off := e.file.Offset(n.Lparen)
+	if !e.edits.Has(off) {
+		return
+	}
+	*f = n.Args[0]
+	e.edits.Remove(off)
 }
 
 var (
@@ -111,11 +121,11 @@ func main() {
 		}
 		wg.Wait()
 	} else {
-		err := json.NewEncoder(os.Stdout).Encode(m)
-		if err != nil {
-			log.Fatal(err)
+		for f, e := range m {
+			if !e.IsEmpty() {
+				fmt.Printf("%s: %s\n", f, e)
+			}
 		}
-		return
 	}
 }
 
