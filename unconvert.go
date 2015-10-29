@@ -12,67 +12,75 @@ import (
 	"go/ast"
 	"go/build"
 	"go/format"
-	"go/printer"
+	"go/parser"
 	"go/token"
 	"io/ioutil"
 	"log"
 	"os"
 	"reflect"
-	"sort"
 	"sync"
 
+	"golang.org/x/tools/container/intsets"
 	"golang.org/x/tools/go/loader"
 	"golang.org/x/tools/go/types"
 )
 
-var fset = token.NewFileSet()
+// Unnecessary conversions are identified as the offset of their left parenthesis within a source file.
 
-type Edit struct {
-	Pos, End int
-}
-
-type editsByPos []Edit
-
-func (e editsByPos) Len() int           { return len(e) }
-func (e editsByPos) Less(i, j int) bool { return e[i].Pos < e[j].Pos }
-func (e editsByPos) Swap(i, j int)      { e[i], e[j] = e[j], e[i] }
-
-func apply(file string, edits []Edit) {
-	if len(edits) == 0 {
+func apply(file string, edits *intsets.Sparse) {
+	if edits.IsEmpty() {
 		return
 	}
 
-	sort.Sort(editsByPos(edits))
+	var fset = token.NewFileSet()
 
-	// Check for overlap.
-	// TODO(mdempsky): Overlap can legally happen in bizarro expressions like
-	// "(*[unsafe.Sizeof(int8(int8(0)))]byte)(*[1]byte)(nil)".
-	for i := 1; i < len(edits); i++ {
-		if edits[i-1].End > edits[i].Pos {
-			log.Fatal("overlap")
+	f, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	v := editor{edits: edits, file: fset.File(f.Package)}
+	ast.Walk(&v, f)
+
+	// TODO(mdempsky): Write to temporary file and rename.
+	var buf bytes.Buffer
+	err = format.Node(&buf, fset, f)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = ioutil.WriteFile(file, buf.Bytes(), 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+type editor struct {
+	edits *intsets.Sparse
+	file  *token.File
+}
+
+func (e *editor) Visit(n ast.Node) ast.Visitor {
+	if n == nil {
+		return nil
+	}
+	v := reflect.ValueOf(n).Elem()
+	for i, n := 0, v.NumField(); i < n; i++ {
+		switch f := v.Field(i).Addr().Interface().(type) {
+		case *ast.Expr:
+			e.rewrite(f)
+		case *[]ast.Expr:
+			for i := range *f {
+				e.rewrite(&(*f)[i])
+			}
 		}
 	}
+	return e
+}
 
-	buf, err := ioutil.ReadFile(file)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	n := edits[0].Pos
-	for i := 1; i < len(edits); i++ {
-		n += copy(buf[n:], buf[edits[i-1].End:edits[i].Pos])
-	}
-	n += copy(buf[n:], buf[edits[len(edits)-1].End:])
-	buf = buf[:n]
-
-	buf, err = format.Source(buf)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	err = ioutil.WriteFile(file, buf, 0)
-	if err != nil {
-		log.Fatal(err)
+func (e *editor) rewrite(f *ast.Expr) {
+	if n, ok := (*f).(*ast.CallExpr); ok && e.edits.Has(e.file.Offset(n.Lparen)) {
+		*f = n.Args[0]
 	}
 }
 
@@ -84,7 +92,7 @@ var (
 func main() {
 	flag.Parse()
 
-	var m map[string][]Edit
+	var m map[string]*intsets.Sparse
 	if *flagAll {
 		m = mergeEdits()
 	} else {
@@ -92,9 +100,16 @@ func main() {
 	}
 
 	if *flagApply {
+		var wg sync.WaitGroup
 		for f, e := range m {
-			apply(f, e)
+			wg.Add(1)
+			f, e := f, e
+			go func() {
+				defer wg.Done()
+				apply(f, e)
+			}()
 		}
+		wg.Wait()
 	} else {
 		err := json.NewEncoder(os.Stdout).Encode(m)
 		if err != nil {
@@ -135,8 +150,8 @@ var plats = [...]struct {
 	{"windows", "amd64"},
 }
 
-func mergeEdits() map[string][]Edit {
-	ch := make(chan map[string][]Edit)
+func mergeEdits() map[string]*intsets.Sparse {
+	ch := make(chan map[string]*intsets.Sparse)
 	var wg sync.WaitGroup
 	for _, plat := range plats {
 		wg.Add(1)
@@ -150,11 +165,11 @@ func mergeEdits() map[string][]Edit {
 		close(ch)
 	}()
 
-	m := make(map[string][]Edit)
+	m := make(map[string]*intsets.Sparse)
 	for m1 := range ch {
 		for f, e := range m1 {
 			if e0, ok := m[f]; ok {
-				m[f] = intersect(e0, e)
+				e0.IntersectionWith(e)
 			} else {
 				m[f] = e
 			}
@@ -163,37 +178,17 @@ func mergeEdits() map[string][]Edit {
 	return m
 }
 
-func intersect(e1, e2 []Edit) []Edit {
-	if len(e1) == 0 || len(e2) == 0 {
-		return nil
-	}
-
-	set := make(map[Edit]bool, len(e1))
-	for _, e := range e1 {
-		set[e] = true
-	}
-
-	var res []Edit
-	for _, e := range e2 {
-		if set[e] {
-			res = append(res, e)
-		}
-	}
-	return res
-}
-
 func noImport(map[string]*types.Package, string) (*types.Package, error) {
 	panic("go/loader said this wouldn't be called")
 }
 
-func computeEdits(os, arch string) map[string][]Edit {
+func computeEdits(os, arch string) map[string]*intsets.Sparse {
 	ctxt := build.Default
 	ctxt.GOOS = os
 	ctxt.GOARCH = arch
 	ctxt.CgoEnabled = false
 
 	var conf loader.Config
-	conf.Fset = fset
 	conf.Build = &ctxt
 	conf.TypeChecker.Import = noImport
 	for _, arg := range flag.Args() {
@@ -206,7 +201,7 @@ func computeEdits(os, arch string) map[string][]Edit {
 
 	type res struct {
 		file  string
-		edits []Edit
+		edits *intsets.Sparse
 	}
 	ch := make(chan res)
 	var wg sync.WaitGroup
@@ -215,9 +210,9 @@ func computeEdits(os, arch string) map[string][]Edit {
 			wg.Add(1)
 			go func(pkg *loader.PackageInfo, file *ast.File) {
 				defer wg.Done()
-				v := visitor{pkg: pkg, file: fset.File(file.Package)}
+				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package)}
 				ast.Walk(&v, file)
-				ch <- res{v.file.Name(), v.edits}
+				ch <- res{v.file.Name(), &v.edits}
 			}(pkg, file)
 		}
 	}
@@ -226,7 +221,7 @@ func computeEdits(os, arch string) map[string][]Edit {
 		close(ch)
 	}()
 
-	m := make(map[string][]Edit)
+	m := make(map[string]*intsets.Sparse)
 	for r := range ch {
 		m[r.file] = r.edits
 	}
@@ -236,16 +231,10 @@ func computeEdits(os, arch string) map[string][]Edit {
 type visitor struct {
 	pkg   *loader.PackageInfo
 	file  *token.File
-	edits []Edit
-	nodes []ast.Node
+	edits intsets.Sparse
 }
 
 func (v *visitor) Visit(node ast.Node) ast.Visitor {
-	if node != nil {
-		v.nodes = append(v.nodes, node)
-	} else {
-		v.nodes = v.nodes[:len(v.nodes)-1]
-	}
 	if call, ok := node.(*ast.CallExpr); ok {
 		v.unconvert(call)
 	}
@@ -282,57 +271,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 
-	outer := v.nodes[len(v.nodes)-2]
-	if keepParen(outer, call, call.Args[0]) {
-		v.remove(call.Fun.Pos(), call.Lparen)
-	} else {
-		v.remove(call.Fun.Pos(), call.Lparen+1)
-		v.remove(call.Rparen, call.Rparen+1)
-	}
-}
-
-func (v *visitor) remove(pos, end token.Pos) {
-	v.edits = append(v.edits, Edit{v.file.Offset(pos), v.file.Offset(end)})
-}
-
-func keepParen(a ast.Node, b, c ast.Expr) bool {
-	// 1. Find the value in a that points to b.
-	bp := findExprField(a, b)
-
-	// 2. Try printing a with s/b/c/ and with s/b/(c)/.
-	var buf1 bytes.Buffer
-	*bp = c
-	printer.Fprint(&buf1, fset, a)
-
-	var buf2 bytes.Buffer
-	*bp = &ast.ParenExpr{X: c}
-	printer.Fprint(&buf2, fset, a)
-
-	*bp = b
-
-	// 3. Return whether they print the same (i.e., the parentheses are necessary).
-	return buf1.String() == buf2.String()
-}
-
-func findExprField(a ast.Node, b ast.Expr) *ast.Expr {
-	v := reflect.ValueOf(a).Elem()
-	for i, n := 0, v.NumField(); i < n; i++ {
-		// Interesting fields are either ast.Expr or []ast.Expr.
-		switch f := v.Field(i).Addr().Interface().(type) {
-		case *ast.Expr:
-			if *f == b {
-				return f
-			}
-		case *[]ast.Expr:
-			for i, e := range *f {
-				if e == b {
-					return &(*f)[i]
-				}
-			}
-		}
-	}
-	log.Fatal("Failed to find b in a")
-	return nil
+	v.edits.Insert(v.file.Offset(call.Lparen))
 }
 
 func hasUntypedValue(n ast.Expr) bool {
