@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
+// Unconvert identifies redundant conversions from Go source files.
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"go/format"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/ioutil"
 	"log"
 	"os"
@@ -22,10 +24,10 @@ import (
 
 	"golang.org/x/tools/container/intsets"
 	"golang.org/x/tools/go/loader"
-	"golang.org/x/tools/go/types"
 )
 
-// Unnecessary conversions are identified as the offset of their left parenthesis within a source file.
+// Unnecessary conversions are identified by the position
+// of their left parenthesis within a source file.
 
 func apply(file string, edits *intsets.Sparse) {
 	if edits.IsEmpty() {
@@ -172,23 +174,9 @@ var plats = [...]struct {
 }
 
 func mergeEdits() map[string]*intsets.Sparse {
-	ch := make(chan map[string]*intsets.Sparse)
-	var wg sync.WaitGroup
-	for _, plat := range plats {
-		wg.Add(1)
-		go func(goos, goarch string) {
-			defer wg.Done()
-			ch <- computeEdits(goos, goarch)
-		}(plat.goos, plat.goarch)
-	}
-	go func() {
-		wg.Wait()
-		close(ch)
-	}()
-
 	m := make(map[string]*intsets.Sparse)
-	for m1 := range ch {
-		for f, e := range m1 {
+	for _, plat := range plats {
+		for f, e := range computeEdits(plat.goos, plat.goarch) {
 			if e0, ok := m[f]; ok {
 				e0.IntersectionWith(e)
 			} else {
@@ -199,8 +187,10 @@ func mergeEdits() map[string]*intsets.Sparse {
 	return m
 }
 
-func noImport(map[string]*types.Package, string) (*types.Package, error) {
-	panic("go/loader said this wouldn't be called")
+type noImporter struct{}
+
+func (noImporter) Import(path string) (*types.Package, error) {
+	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
 func computeEdits(os, arch string) map[string]*intsets.Sparse {
@@ -211,7 +201,7 @@ func computeEdits(os, arch string) map[string]*intsets.Sparse {
 
 	var conf loader.Config
 	conf.Build = &ctxt
-	conf.TypeChecker.Import = noImport
+	conf.TypeChecker.Importer = noImporter{}
 	for _, arg := range flag.Args() {
 		conf.Import(arg)
 	}
@@ -228,13 +218,14 @@ func computeEdits(os, arch string) map[string]*intsets.Sparse {
 	var wg sync.WaitGroup
 	for _, pkg := range prog.InitialPackages() {
 		for _, file := range pkg.Files {
+			pkg, file := pkg, file
 			wg.Add(1)
-			go func(pkg *loader.PackageInfo, file *ast.File) {
+			go func() {
 				defer wg.Done()
 				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package)}
 				ast.Walk(&v, file)
 				ch <- res{v.file.Name(), &v.edits}
-			}(pkg, file)
+			}()
 		}
 	}
 	go func() {
@@ -275,59 +266,64 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 	if !ft.IsType() {
-		// Not a conversion.
+		// Function call; not a conversion.
 		return
 	}
 	at, ok := v.pkg.Types[call.Args[0]]
 	if !ok {
 		fmt.Println("Missing type for argument")
 	}
-	if !types.Identical(ft.Type, at.Type) {
-		// A real conversion.
+	if isUntypedValue(call.Args[0], &v.pkg.Info) {
+		// Workaround golang.org/issue/13061.
 		return
 	}
-	if at.Value != nil || hasUntypedValue(call.Args[0]) {
-		// As a workaround for golang.org/issue/13061,
-		// skip conversions that contain an untyped value.
+	if !types.Identical(ft.Type, at.Type) {
+		// A real conversion.
 		return
 	}
 
 	v.edits.Insert(v.file.Offset(call.Lparen))
 }
 
-func hasUntypedValue(n ast.Expr) bool {
-	var v uvVisitor
-	ast.Walk(&v, n)
-	return v.found
-}
-
-type uvVisitor struct {
-	found bool
-}
-
-func (v *uvVisitor) Visit(node ast.Node) ast.Visitor {
-	// Short circuit.
-	if v.found {
-		return nil
-	}
-
-	switch node := node.(type) {
+func isUntypedValue(n ast.Expr, info *types.Info) (res bool) {
+	switch n := n.(type) {
 	case *ast.BinaryExpr:
-		switch node.Op {
-		case token.SHL, token.SHR, token.EQL, token.NEQ, token.LSS, token.GTR, token.LEQ, token.GEQ:
+		switch n.Op {
+		case token.SHL, token.SHR:
 			// Shifts yield an untyped value if their LHS is untyped.
+			return isUntypedValue(n.X, info)
+		case token.EQL, token.NEQ, token.LSS, token.GTR, token.LEQ, token.GEQ:
 			// Comparisons yield an untyped boolean value.
-			v.found = true
+			return true
+		case token.ADD, token.SUB, token.MUL, token.QUO, token.REM,
+			token.AND, token.OR, token.XOR, token.AND_NOT,
+			token.LAND, token.LOR:
+			return isUntypedValue(n.X, info) && isUntypedValue(n.Y, info)
 		}
+	case *ast.UnaryExpr:
+		switch n.Op {
+		case token.ADD, token.SUB, token.NOT, token.XOR:
+			return isUntypedValue(n.X, info)
+		}
+	case *ast.BasicLit:
+		// Basic literals are always untyped.
+		return true
+	case *ast.ParenExpr:
+		return isUntypedValue(n.X, info)
+	case *ast.SelectorExpr:
+		return isUntypedValue(n.Sel, info)
 	case *ast.Ident:
-		if node.Name == "nil" {
-			// Probably the universal untyped zero value.
-			v.found = true
+		if obj, ok := info.Uses[n]; ok {
+			if obj.Pkg() == nil && obj.Name() == "nil" {
+				// The universal untyped zero value.
+				return true
+			}
+			if b, ok := obj.Type().(*types.Basic); ok && b.Info() & types.IsUntyped != 0 {
+				// Reference to an untyped constant.
+				return true
+			}
 		}
 	}
 
-	if v.found {
-		return nil
-	}
-	return v
+	return false
 }
