@@ -323,7 +323,39 @@ func isUntypedValue(n ast.Expr, info *types.Info) (res bool) {
 				return true
 			}
 		}
+	case *ast.CallExpr:
+		if b, ok := asBuiltin(n.Fun, info); ok {
+			switch b.Name() {
+			case "real", "imag":
+				return isUntypedValue(n.Args[0], info)
+			case "complex":
+				return isUntypedValue(n.Args[0], info) && isUntypedValue(n.Args[1], info)
+			}
+		}
 	}
 
 	return false
+}
+
+func asBuiltin(n ast.Expr, info *types.Info) (*types.Builtin, bool) {
+	for {
+		paren, ok := n.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		n = paren.X
+	}
+
+	ident, ok := n.(*ast.Ident)
+	if !ok {
+		return nil, false
+	}
+
+	obj, ok := info.Uses[ident]
+	if !ok {
+		return nil, false
+	}
+
+	b, ok := obj.(*types.Builtin)
+	return b, ok
 }
