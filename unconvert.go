@@ -125,6 +125,8 @@ func print(name string, edits *intsets.Sparse) {
 }
 
 func rub(buf []byte) []byte {
+	// TODO(mdempsky): Handle combining characters?
+	// TODO(mdempsky): Handle East Asian wide characters?
 	var res bytes.Buffer
 	for _, c := range string(buf) {
 		if !unicode.IsSpace(c) {
