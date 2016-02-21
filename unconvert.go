@@ -173,7 +173,7 @@ func main() {
 	if *flagAll {
 		m = mergeEdits()
 	} else {
-		m = computeEdits(build.Default.GOOS, build.Default.GOARCH)
+		m = computeEdits(build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled)
 	}
 
 	if *flagApply {
@@ -238,7 +238,7 @@ var plats = [...]struct {
 func mergeEdits() map[string]*intsets.Sparse {
 	m := make(map[string]*intsets.Sparse)
 	for _, plat := range plats {
-		for f, e := range computeEdits(plat.goos, plat.goarch) {
+		for f, e := range computeEdits(plat.goos, plat.goarch, false) {
 			if e0, ok := m[f]; ok {
 				e0.IntersectionWith(e)
 			} else {
@@ -255,11 +255,11 @@ func (noImporter) Import(path string) (*types.Package, error) {
 	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
-func computeEdits(os, arch string) map[string]*intsets.Sparse {
+func computeEdits(os, arch string, cgoEnabled bool) map[string]*intsets.Sparse {
 	ctxt := build.Default
 	ctxt.GOOS = os
 	ctxt.GOARCH = arch
-	ctxt.CgoEnabled = false
+	ctxt.CgoEnabled = cgoEnabled
 
 	var conf loader.Config
 	conf.Build = &ctxt
