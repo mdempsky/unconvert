@@ -1,0 +1,22 @@
+About:
+
+The unconvert program analyzes Go packages to find and remove type
+conversion expressions T(x) where x already has type T.
+
+Optionally, using the -all flag, unconvert will analyze the Go
+packages under all possible GOOS/GOARCH combinations, and only remove
+conversions that are redundant in all cases.
+
+E.g., syscall.Timespec's Sec and Nsec fields are int64 under
+linux/amd64 but int32 under linux/386.  An int64(ts.Sec) conversion
+that appears in a linux/amd64-only file will be identified as
+redundant, but it will be preserved if it occurs in a file that's
+compiled for both linux/amd64 and linux/386.
+
+Install:
+
+    go get github.com/mdempsky/unconvert
+
+Usage:
+
+    unconvert -all `go list std cmd`

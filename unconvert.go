@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Unconvert identifies redundant conversions from Go source files.
+// Unconvert removes redundant type conversions from Go packages.
 package main
 
 import (
@@ -99,8 +99,8 @@ func (e *editor) rewrite(f *ast.Expr) {
 
 var (
 	flagAll        = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
-	flagApply      = flag.Bool("apply", false, "apply edits")
-	flagCPUProfile = flag.String("cpuprofile", "", "write cpu profile to file")
+	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
+	flagStdout     = flag.Bool("stdout", false, "print type conversion positions to stdout instead of removing them")
 )
 
 func main() {
@@ -122,7 +122,13 @@ func main() {
 		m = computeEdits(build.Default.GOOS, build.Default.GOARCH)
 	}
 
-	if *flagApply {
+	if *flagStdout {
+		for f, e := range m {
+			if !e.IsEmpty() {
+				fmt.Printf("%s: %s\n", f, e)
+			}
+		}
+	} else {
 		var wg sync.WaitGroup
 		for f, e := range m {
 			wg.Add(1)
@@ -133,27 +139,26 @@ func main() {
 			}()
 		}
 		wg.Wait()
-	} else {
-		for f, e := range m {
-			if !e.IsEmpty() {
-				fmt.Printf("%s: %s\n", f, e)
-			}
-		}
 	}
 }
 
 var plats = [...]struct {
 	goos, goarch string
 }{
+	// TODO(mdempsky): buildall.bash also builds linux-386-387 and linux-arm-arm5.
 	{"linux", "386"},
 	{"linux", "amd64"},
 	{"linux", "arm"},
 	{"linux", "arm64"},
+	{"linux", "mips64"},
+	{"linux", "mips64le"},
 	{"linux", "ppc64"},
 	{"linux", "ppc64le"},
 	{"nacl", "386"},
 	{"nacl", "amd64p32"},
 	{"nacl", "arm"},
+	{"android", "386"},
+	{"android", "amd64"},
 	{"darwin", "386"},
 	{"darwin", "amd64"},
 	{"dragonfly", "amd64"},
@@ -318,7 +323,7 @@ func isUntypedValue(n ast.Expr, info *types.Info) (res bool) {
 				// The universal untyped zero value.
 				return true
 			}
-			if b, ok := obj.Type().(*types.Basic); ok && b.Info() & types.IsUntyped != 0 {
+			if b, ok := obj.Type().(*types.Basic); ok && b.Info()&types.IsUntyped != 0 {
 				// Reference to an untyped constant.
 				return true
 			}
