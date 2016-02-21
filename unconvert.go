@@ -20,7 +20,9 @@ import (
 	"os"
 	"reflect"
 	"runtime/pprof"
+	"sort"
 	"sync"
+	"unicode"
 
 	"golang.org/x/tools/container/intsets"
 	"golang.org/x/tools/go/loader"
@@ -34,8 +36,7 @@ func apply(file string, edits *intsets.Sparse) {
 		return
 	}
 
-	var fset = token.NewFileSet()
-
+	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, file, nil, parser.ParseComments)
 	if err != nil {
 		log.Fatal(err)
@@ -97,10 +98,63 @@ func (e *editor) rewrite(f *ast.Expr) {
 	e.edits.Remove(off)
 }
 
+func print(name string, edits *intsets.Sparse) {
+	if edits.IsEmpty() {
+		return
+	}
+
+	buf, err := ioutil.ReadFile(name)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, buf, 0)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	file := fset.File(f.Package)
+	for _, p := range edits.AppendTo(nil) {
+		pos := file.Position(file.Pos(p))
+		fmt.Printf("%s:%d:%d:\n", pos.Filename, pos.Line, pos.Column)
+		line := lineForOffset(buf, pos.Offset)
+		fmt.Printf("%s\n", line)
+		fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
+	}
+}
+
+func rub(buf []byte) []byte {
+	var res bytes.Buffer
+	for _, c := range string(buf) {
+		if !unicode.IsSpace(c) {
+			c = ' '
+		}
+		res.WriteRune(c)
+	}
+	return res.Bytes()
+}
+
+func lineForOffset(buf []byte, off int) []byte {
+	sol := bytes.LastIndexByte(buf[:off], '\n')
+	if sol < 0 {
+		sol = 0
+	} else {
+		sol += 1
+	}
+	eol := bytes.IndexByte(buf[off:], '\n')
+	if eol < 0 {
+		eol = len(buf)
+	} else {
+		eol += off
+	}
+	return buf[sol:eol]
+}
+
 var (
 	flagAll        = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
+	flagApply      = flag.Bool("apply", false, "apply edits to source files")
 	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
-	flagStdout     = flag.Bool("stdout", false, "print type conversion positions to stdout instead of removing them")
 )
 
 func main() {
@@ -122,13 +176,7 @@ func main() {
 		m = computeEdits(build.Default.GOOS, build.Default.GOARCH)
 	}
 
-	if *flagStdout {
-		for f, e := range m {
-			if !e.IsEmpty() {
-				fmt.Printf("%s: %s\n", f, e)
-			}
-		}
-	} else {
+	if *flagApply {
 		var wg sync.WaitGroup
 		for f, e := range m {
 			wg.Add(1)
@@ -139,6 +187,15 @@ func main() {
 			}()
 		}
 		wg.Wait()
+	} else {
+		var files []string
+		for f := range m {
+			files = append(files, f)
+		}
+		sort.Strings(files)
+		for _, f := range files {
+			print(f, m[f])
+		}
 	}
 }
 
