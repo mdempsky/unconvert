@@ -162,7 +162,6 @@ var (
 func usage() {
 	fmt.Fprintf(os.Stderr, "usage: unconvert [flags] [package ...]\n")
 	flag.PrintDefaults()
-	os.Exit(2)
 }
 
 func main() {
