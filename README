@@ -9,10 +9,13 @@ Install:
 
 Usage:
 
-    $ unconvert -v bytes
+    $ unconvert -v bytes fmt
     GOROOT/src/bytes/reader.go:117:14: unnecessary conversion
-                abs = int64(r.i) + offset
-                           ^
+                    abs = int64(r.i) + offset
+                               ^
+    GOROOT/src/fmt/print.go:411:21: unnecessary conversion
+            p.fmt.integer(int64(v), 16, unsigned, udigits)
+                               ^
 
 Flags:
 
