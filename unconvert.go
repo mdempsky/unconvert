@@ -117,7 +117,7 @@ func print(name string, edits *intsets.Sparse) {
 	file := fset.File(f.Package)
 	for _, p := range edits.AppendTo(nil) {
 		pos := file.Position(file.Pos(p))
-		if flagOneLiners {
+		if *flagOneLiners {
 			fmt.Printf("%s:%d:%d: useless conversion\n", pos.Filename, pos.Line,
 				pos.Column)
 		} else {
