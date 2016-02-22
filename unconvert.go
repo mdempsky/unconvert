@@ -162,7 +162,7 @@ var (
 	flagAll        = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
 	flagApply      = flag.Bool("apply", false, "apply edits to source files")
 	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
-	flagOneLiners = flag.Bool("oneliners", false, "outputs 1 line per case")
+	flagOneLiners  = flag.Bool("oneliners", false, "outputs 1 line per case")
 )
 
 func usage() {
