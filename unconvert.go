@@ -117,10 +117,12 @@ func print(name string, edits *intsets.Sparse) {
 	file := fset.File(f.Package)
 	for _, p := range edits.AppendTo(nil) {
 		pos := file.Position(file.Pos(p))
-		fmt.Printf("%s:%d:%d:\n", pos.Filename, pos.Line, pos.Column)
-		line := lineForOffset(buf, pos.Offset)
-		fmt.Printf("%s\n", line)
-		fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
+		fmt.Printf("%s:%d:%d: unnecessary conversion\n", pos.Filename, pos.Line, pos.Column)
+		if *flagV {
+			line := lineForOffset(buf, pos.Offset)
+			fmt.Printf("%s\n", line)
+			fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
+		}
 	}
 }
 
@@ -157,6 +159,7 @@ var (
 	flagAll        = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
 	flagApply      = flag.Bool("apply", false, "apply edits to source files")
 	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
+	flagV          = flag.Bool("v", false, "verbose output")
 )
 
 func usage() {

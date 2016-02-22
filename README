@@ -9,12 +9,15 @@ Install:
 
 Usage:
 
-    $ unconvert bytes
-    GOROOT/src/bytes/reader.go:117:14:
+    $ unconvert -v bytes
+    GOROOT/src/bytes/reader.go:117:14: unnecessary conversion
                 abs = int64(r.i) + offset
                            ^
 
 Flags:
+
+Using the -v flag, unconvert will also print the source line and a
+caret to indicate the unnecessary conversion's position therein.
 
 Using the -apply flag, unconvert will rewrite the Go source files
 without the unnecessary type conversions.
