@@ -159,7 +159,9 @@ var (
 	flagAll        = flag.Bool("all", false, "type check all GOOS and GOARCH combinations")
 	flagApply      = flag.Bool("apply", false, "apply edits to source files")
 	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
-	flagV          = flag.Bool("v", false, "verbose output")
+	// TODO(mdempsky): Better description and maybe flag name.
+	flagSafe = flag.Bool("safe", false, "be more conservative (experimental)")
+	flagV    = flag.Bool("v", false, "verbose output")
 )
 
 func usage() {
@@ -313,13 +315,29 @@ func computeEdits(os, arch string, cgoEnabled bool) map[string]*intsets.Sparse {
 	return m
 }
 
+type step struct {
+	n ast.Node
+	i int
+}
+
 type visitor struct {
 	pkg   *loader.PackageInfo
 	file  *token.File
 	edits intsets.Sparse
+	path  []step
 }
 
 func (v *visitor) Visit(node ast.Node) ast.Visitor {
+	if node != nil {
+		v.path = append(v.path, step{n: node})
+	} else {
+		n := len(v.path)
+		v.path = v.path[:n-1]
+		if n >= 2 {
+			v.path[n-2].i++
+		}
+	}
+
 	if call, ok := node.(*ast.CallExpr); ok {
 		v.unconvert(call)
 	}
@@ -345,17 +363,139 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 	at, ok := v.pkg.Types[call.Args[0]]
 	if !ok {
 		fmt.Println("Missing type for argument")
-	}
-	if isUntypedValue(call.Args[0], &v.pkg.Info) {
-		// Workaround golang.org/issue/13061.
 		return
 	}
 	if !types.Identical(ft.Type, at.Type) {
 		// A real conversion.
 		return
 	}
+	if isUntypedValue(call.Args[0], &v.pkg.Info) {
+		// Workaround golang.org/issue/13061.
+		return
+	}
+	if *flagSafe && !v.isSafeContext(at.Type) {
+		// TODO(mdempsky): Remove this message.
+		fmt.Println("Skipped a possible type conversion because of -safe at", v.file.Position(call.Pos()))
+		return
+	}
 
 	v.edits.Insert(v.file.Offset(call.Lparen))
+}
+
+// isSafeContext reports whether the current context requires
+// an expression of type t.
+//
+// TODO(mdempsky): That's a bad explanation.
+func (v *visitor) isSafeContext(t types.Type) bool {
+	ctxt := &v.path[len(v.path)-2]
+	switch n := ctxt.n.(type) {
+	case *ast.AssignStmt:
+		pos := ctxt.i - len(n.Lhs)
+		if pos < 0 {
+			fmt.Println("Type conversion on LHS of assignment?")
+			return false
+		}
+		if n.Tok == token.DEFINE {
+			// Skip := assignments.
+			return true
+		}
+		// We're a conversion in the pos'th element of n.Rhs.
+		// Check that the corresponding element of n.Lhs is of type t.
+		lt, ok := v.pkg.Types[n.Lhs[pos]]
+		if !ok {
+			fmt.Println("Missing type for LHS expression")
+			return false
+		}
+		return types.Identical(t, lt.Type)
+	case *ast.BinaryExpr:
+		var other ast.Expr
+		if ctxt.i == 0 {
+			other = n.Y
+		} else {
+			other = n.X
+		}
+		ot, ok := v.pkg.Types[other]
+		if !ok {
+			fmt.Println("Missing type for other binop subexpr")
+			return false
+		}
+		return types.Identical(t, ot.Type)
+	case *ast.CallExpr:
+		pos := ctxt.i - 1
+		if pos < 0 {
+			// Type conversion in the function subexpr is okay.
+			return true
+		}
+		ft, ok := v.pkg.Types[n.Fun]
+		if !ok {
+			fmt.Println("Missing type for function expression")
+			return false
+		}
+		sig, ok := ft.Type.(*types.Signature)
+		if !ok {
+			// "Function" is either a type conversion (ok) or a builtin (ok?).
+			return true
+		}
+		params := sig.Params()
+		var pt types.Type
+		if sig.Variadic() && n.Ellipsis == token.NoPos && pos >= params.Len()-1 {
+			pt = params.At(params.Len() - 1).Type().(*types.Slice).Elem()
+		} else {
+			pt = params.At(pos).Type()
+		}
+		return types.Identical(t, pt)
+	case *ast.CompositeLit, *ast.KeyValueExpr:
+		fmt.Println("TODO(mdempsky): Compare against value type of composite literal type at", v.file.Position(n.Pos()))
+		return true
+	case *ast.ReturnStmt:
+		// TODO(mdempsky): Is there a better way to get the corresponding
+		// return parameter type?
+		var funcType *ast.FuncType
+		for i := len(v.path) - 1; funcType == nil && i >= 0; i-- {
+			switch f := v.path[i].n.(type) {
+			case *ast.FuncDecl:
+				funcType = f.Type
+			case *ast.FuncLit:
+				funcType = f.Type
+			}
+		}
+		var typeExpr ast.Expr
+		for i, j := ctxt.i, 0; j < len(funcType.Results.List); j++ {
+			f := funcType.Results.List[j]
+			if len(f.Names) == 0 {
+				if i >= 1 {
+					i--
+					continue
+				}
+			} else {
+				if i >= len(f.Names) {
+					i -= len(f.Names)
+					continue
+				}
+			}
+			typeExpr = f.Type
+			break
+		}
+		if typeExpr == nil {
+			fmt.Println(ctxt)
+		}
+		pt, ok := v.pkg.Types[typeExpr]
+		if !ok {
+			fmt.Println("Missing type for return parameter at", v.file.Position(n.Pos()))
+			return false
+		}
+		return types.Identical(t, pt.Type)
+	case *ast.StarExpr, *ast.UnaryExpr:
+		// TODO(mdempsky): I think these are always safe.
+		return true
+	case *ast.SwitchStmt:
+		// TODO(mdempsky): I think this is always safe?
+		return true
+	default:
+		// TODO(mdempsky): When can this happen?
+		fmt.Printf("... huh, %T at %v\n", n, v.file.Position(n.Pos()))
+		return true
+	}
 }
 
 func isUntypedValue(n ast.Expr, info *types.Info) (res bool) {
