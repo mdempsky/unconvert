@@ -408,6 +408,15 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		return types.Identical(t, lt.Type)
 	case *ast.BinaryExpr:
+		if n.Op == token.SHL || n.Op == token.SHR {
+			if ctxt.i == 1 {
+				// RHS of a shift is always safe.
+				return true
+			}
+			// For the LHS, we should inspect up another level.
+			fmt.Println("TODO(mdempsky): Handle LHS of shift expressions")
+			return true
+		}
 		var other ast.Expr
 		if ctxt.i == 0 {
 			other = n.Y
