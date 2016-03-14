@@ -206,8 +206,15 @@ func main() {
 			files = append(files, f)
 		}
 		sort.Strings(files)
+		found := false
 		for _, f := range files {
+			if !m[f].IsEmpty() {
+				found = true
+			}
 			print(f, m[f])
+		}
+		if found {
+			os.Exit(1)
 		}
 	}
 }
