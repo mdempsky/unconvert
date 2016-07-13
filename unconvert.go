@@ -24,6 +24,7 @@ import (
 	"sync"
 	"unicode"
 
+	"github.com/kisielk/gotool"
 	"golang.org/x/tools/container/intsets"
 	"golang.org/x/tools/go/loader"
 )
@@ -182,11 +183,16 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
+	importPaths := gotool.ImportPaths(flag.Args())
+	if len(importPaths) == 0 {
+		return
+	}
+
 	var m map[string]*intsets.Sparse
 	if *flagAll {
-		m = mergeEdits()
+		m = mergeEdits(importPaths)
 	} else {
-		m = computeEdits(build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled)
+		m = computeEdits(importPaths, build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled)
 	}
 
 	if *flagApply {
@@ -261,10 +267,10 @@ var plats = [...]struct {
 	{"windows", "amd64"},
 }
 
-func mergeEdits() map[string]*intsets.Sparse {
+func mergeEdits(importPaths []string) map[string]*intsets.Sparse {
 	m := make(map[string]*intsets.Sparse)
 	for _, plat := range plats {
-		for f, e := range computeEdits(plat.goos, plat.goarch, false) {
+		for f, e := range computeEdits(importPaths, plat.goos, plat.goarch, false) {
 			if e0, ok := m[f]; ok {
 				e0.IntersectionWith(e)
 			} else {
@@ -281,7 +287,7 @@ func (noImporter) Import(path string) (*types.Package, error) {
 	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
-func computeEdits(os, arch string, cgoEnabled bool) map[string]*intsets.Sparse {
+func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[string]*intsets.Sparse {
 	ctxt := build.Default
 	ctxt.GOOS = os
 	ctxt.GOARCH = arch
@@ -290,8 +296,8 @@ func computeEdits(os, arch string, cgoEnabled bool) map[string]*intsets.Sparse {
 	var conf loader.Config
 	conf.Build = &ctxt
 	conf.TypeChecker.Importer = noImporter{}
-	for _, arg := range flag.Args() {
-		conf.Import(arg)
+	for _, importPath := range importPaths {
+		conf.Import(importPath)
 	}
 	prog, err := conf.Load()
 	if err != nil {
