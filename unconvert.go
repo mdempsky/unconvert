@@ -25,15 +25,14 @@ import (
 	"unicode"
 
 	"github.com/kisielk/gotool"
-	"golang.org/x/tools/container/intsets"
 	"golang.org/x/tools/go/loader"
 )
 
 // Unnecessary conversions are identified by the position
 // of their left parenthesis within a source file.
 
-func apply(file string, edits *intsets.Sparse) {
-	if edits.IsEmpty() {
+func apply(file string, edits editSet) {
+	if len(edits) == 0 {
 		return
 	}
 
@@ -46,7 +45,7 @@ func apply(file string, edits *intsets.Sparse) {
 	// Note: We modify edits during the walk.
 	v := editor{edits: edits, file: fset.File(f.Package)}
 	ast.Walk(&v, f)
-	if !edits.IsEmpty() {
+	if len(edits) != 0 {
 		log.Printf("%s: missing edits %s", file, edits)
 	}
 
@@ -64,7 +63,7 @@ func apply(file string, edits *intsets.Sparse) {
 }
 
 type editor struct {
-	edits *intsets.Sparse
+	edits editSet
 	file  *token.File
 }
 
@@ -87,20 +86,21 @@ func (e *editor) Visit(n ast.Node) ast.Visitor {
 }
 
 func (e *editor) rewrite(f *ast.Expr) {
-	n, ok := (*f).(*ast.CallExpr)
+	call, ok := (*f).(*ast.CallExpr)
 	if !ok {
 		return
 	}
-	off := e.file.Offset(n.Lparen)
-	if !e.edits.Has(off) {
+
+	pos := e.file.Position(call.Lparen)
+	if _, ok := e.edits[pos]; !ok {
 		return
 	}
-	*f = n.Args[0]
-	e.edits.Remove(off)
+	*f = call.Args[0]
+	delete(e.edits, pos)
 }
 
-func print(name string, edits *intsets.Sparse) {
-	if edits.IsEmpty() {
+func print(name string, edits editSet) {
+	if len(edits) == 0 {
 		return
 	}
 
@@ -109,15 +109,7 @@ func print(name string, edits *intsets.Sparse) {
 		log.Fatal(err)
 	}
 
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, name, buf, 0)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	file := fset.File(f.Package)
-	for _, p := range edits.AppendTo(nil) {
-		pos := file.Position(file.Pos(p))
+	for pos := range edits {
 		fmt.Printf("%s:%d:%d: unnecessary conversion\n", pos.Filename, pos.Line, pos.Column)
 		if *flagV {
 			line := lineForOffset(buf, pos.Offset)
@@ -145,7 +137,7 @@ func lineForOffset(buf []byte, off int) []byte {
 	if sol < 0 {
 		sol = 0
 	} else {
-		sol += 1
+		sol++
 	}
 	eol := bytes.IndexByte(buf[off:], '\n')
 	if eol < 0 {
@@ -188,7 +180,7 @@ func main() {
 		return
 	}
 
-	var m map[string]*intsets.Sparse
+	var m map[string]editSet
 	if *flagAll {
 		m = mergeEdits(importPaths)
 	} else {
@@ -214,7 +206,7 @@ func main() {
 		sort.Strings(files)
 		found := false
 		for _, f := range files {
-			if !m[f].IsEmpty() {
+			if len(m[f]) != 0 {
 				found = true
 			}
 			print(f, m[f])
@@ -267,12 +259,16 @@ var plats = [...]struct {
 	{"windows", "amd64"},
 }
 
-func mergeEdits(importPaths []string) map[string]*intsets.Sparse {
-	m := make(map[string]*intsets.Sparse)
+func mergeEdits(importPaths []string) map[string]editSet {
+	m := make(map[string]editSet)
 	for _, plat := range plats {
 		for f, e := range computeEdits(importPaths, plat.goos, plat.goarch, false) {
 			if e0, ok := m[f]; ok {
-				e0.IntersectionWith(e)
+				for k := range e0 {
+					if _, ok := e[k]; !ok {
+						delete(e0, k)
+					}
+				}
 			} else {
 				m[f] = e
 			}
@@ -287,7 +283,7 @@ func (noImporter) Import(path string) (*types.Package, error) {
 	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
-func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[string]*intsets.Sparse {
+func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[string]editSet {
 	ctxt := build.Default
 	ctxt.GOOS = os
 	ctxt.GOARCH = arch
@@ -306,7 +302,7 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[st
 
 	type res struct {
 		file  string
-		edits *intsets.Sparse
+		edits editSet
 	}
 	ch := make(chan res)
 	var wg sync.WaitGroup
@@ -316,9 +312,9 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[st
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package)}
+				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package), edits: make(editSet)}
 				ast.Walk(&v, file)
-				ch <- res{v.file.Name(), &v.edits}
+				ch <- res{v.file.Name(), v.edits}
 			}()
 		}
 	}
@@ -327,7 +323,7 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[st
 		close(ch)
 	}()
 
-	m := make(map[string]*intsets.Sparse)
+	m := make(map[string]editSet)
 	for r := range ch {
 		m[r.file] = r.edits
 	}
@@ -339,10 +335,12 @@ type step struct {
 	i int
 }
 
+type editSet map[token.Position]struct{}
+
 type visitor struct {
 	pkg   *loader.PackageInfo
 	file  *token.File
-	edits intsets.Sparse
+	edits editSet
 	path  []step
 }
 
@@ -398,7 +396,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 
-	v.edits.Insert(v.file.Offset(call.Lparen))
+	v.edits[v.file.Position(call.Lparen)] = struct{}{}
 }
 
 // isSafeContext reports whether the current context requires
