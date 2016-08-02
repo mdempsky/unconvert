@@ -25,6 +25,7 @@ import (
 	"unicode"
 
 	"github.com/kisielk/gotool"
+	"golang.org/x/text/width"
 	"golang.org/x/tools/go/loader"
 )
 
@@ -112,24 +113,30 @@ func print(name string, edits editSet) {
 	for pos := range edits {
 		fmt.Printf("%s:%d:%d: unnecessary conversion\n", pos.Filename, pos.Line, pos.Column)
 		if *flagV {
-			line := lineForOffset(buf, pos.Offset)
-			fmt.Printf("%s\n", line)
-			fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
+			line := string(lineForOffset(buf, pos.Offset))
+			fmt.Println(line)
+			fmt.Println(makeCaret(line[:pos.Column-1]))
 		}
 	}
 }
 
-func rub(buf []byte) []byte {
-	// TODO(mdempsky): Handle combining characters?
-	// TODO(mdempsky): Handle East Asian wide characters?
-	var res bytes.Buffer
-	for _, c := range string(buf) {
-		if !unicode.IsSpace(c) {
-			c = ' '
+func makeCaret(line string) string {
+	var buf bytes.Buffer
+	for _, r := range line {
+		if unicode.IsSpace(r) {
+			buf.WriteRune(r)
+		} else {
+			switch width.LookupRune(r).Kind() {
+			case width.EastAsianWide, width.EastAsianFullwidth:
+				buf.WriteRune(' ')
+				fallthrough
+			case width.Neutral, width.EastAsianAmbiguous, width.EastAsianNarrow, width.EastAsianHalfwidth:
+				buf.WriteRune(' ')
+			}
 		}
-		res.WriteRune(c)
 	}
-	return res.Bytes()
+	buf.WriteRune('^')
+	return buf.String()
 }
 
 func lineForOffset(buf []byte, off int) []byte {
