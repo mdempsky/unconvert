@@ -25,6 +25,7 @@ import (
 	"unicode"
 
 	"github.com/kisielk/gotool"
+	"golang.org/x/text/width"
 	"golang.org/x/tools/go/loader"
 )
 
@@ -123,15 +124,22 @@ func print(name string, edits editSet) {
 	}
 }
 
+// Rub returns a copy of buf with all non-whitespace characters replaced
+// by spaces (like rubbing them out with white out).
 func rub(buf []byte) []byte {
 	// TODO(mdempsky): Handle combining characters?
-	// TODO(mdempsky): Handle East Asian wide characters?
 	var res bytes.Buffer
-	for _, c := range string(buf) {
-		if !unicode.IsSpace(c) {
-			c = ' '
+	for _, r := range string(buf) {
+		if unicode.IsSpace(r) {
+			res.WriteRune(r)
+			continue
 		}
-		res.WriteRune(c)
+		switch width.LookupRune(r).Kind() {
+		case width.EastAsianWide, width.EastAsianFullwidth:
+			res.WriteString("  ")
+		default:
+			res.WriteByte(' ')
+		}
 	}
 	return res.Bytes()
 }
