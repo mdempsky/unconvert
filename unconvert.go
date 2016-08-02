@@ -180,7 +180,7 @@ func main() {
 		return
 	}
 
-	var m map[string]editSet
+	var m fileToEditSet
 	if *flagAll {
 		m = mergeEdits(importPaths)
 	} else {
@@ -259,8 +259,8 @@ var plats = [...]struct {
 	{"windows", "amd64"},
 }
 
-func mergeEdits(importPaths []string) map[string]editSet {
-	m := make(map[string]editSet)
+func mergeEdits(importPaths []string) fileToEditSet {
+	m := make(fileToEditSet)
 	for _, plat := range plats {
 		for f, e := range computeEdits(importPaths, plat.goos, plat.goarch, false) {
 			if e0, ok := m[f]; ok {
@@ -283,7 +283,7 @@ func (noImporter) Import(path string) (*types.Package, error) {
 	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
-func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[string]editSet {
+func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileToEditSet {
 	ctxt := build.Default
 	ctxt.GOOS = os
 	ctxt.GOARCH = arch
@@ -323,7 +323,7 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) map[st
 		close(ch)
 	}()
 
-	m := make(map[string]editSet)
+	m := make(fileToEditSet)
 	for r := range ch {
 		m[r.file] = r.edits
 	}
@@ -336,6 +336,7 @@ type step struct {
 }
 
 type editSet map[token.Position]struct{}
+type fileToEditSet map[string]editSet
 
 type visitor struct {
 	pkg   *loader.PackageInfo
