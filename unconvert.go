@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"flag"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -100,22 +102,29 @@ func (e *editor) rewrite(f *ast.Expr) {
 	delete(e.edits, pos)
 }
 
-func print(name string, edits editSet) {
-	if len(edits) == 0 {
-		return
-	}
+func print(edits []token.Position) {
+	fileByName := make(map[string][]string)
 
-	buf, err := ioutil.ReadFile(name)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for pos := range edits {
+	for _, pos := range edits {
 		fmt.Printf("%s:%d:%d: unnecessary conversion\n", pos.Filename, pos.Line, pos.Column)
+
 		if *flagV {
-			line := string(lineForOffset(buf, pos.Offset))
-			fmt.Println(line)
-			fmt.Println(makeCaret(line[:pos.Column-1]))
+			lines, ok := fileByName[pos.Filename]
+			if !ok {
+				buf, err := ioutil.ReadFile(pos.Filename)
+				if err != nil {
+					log.Fatal(err)
+				}
+				lines = getLines(bytes.NewReader(buf))
+				fileByName[pos.Filename] = lines
+			}
+
+			if line := lines[pos.Line-1]; len(line) > pos.Column {
+				fmt.Println(line)
+				fmt.Println(makeCaret(line[:pos.Column-1]))
+			} else {
+				fmt.Println("[ERROR]: cannot map back to source location")
+			}
 		}
 	}
 }
@@ -139,20 +148,12 @@ func makeCaret(line string) string {
 	return buf.String()
 }
 
-func lineForOffset(buf []byte, off int) []byte {
-	sol := bytes.LastIndexByte(buf[:off], '\n')
-	if sol < 0 {
-		sol = 0
-	} else {
-		sol++
+func getLines(r io.Reader) []string {
+	var lines []string
+	for scanner := bufio.NewScanner(r); scanner.Scan(); {
+		lines = append(lines, scanner.Text())
 	}
-	eol := bytes.IndexByte(buf[off:], '\n')
-	if eol < 0 {
-		eol = len(buf)
-	} else {
-		eol += off
-	}
-	return buf[sol:eol]
+	return lines
 }
 
 var (
@@ -206,19 +207,15 @@ func main() {
 		}
 		wg.Wait()
 	} else {
-		var files []string
-		for f := range m {
-			files = append(files, f)
-		}
-		sort.Strings(files)
-		found := false
-		for _, f := range files {
-			if len(m[f]) != 0 {
-				found = true
+		var edits positionSlice
+		for _, positions := range m {
+			for pos := range positions {
+				edits = append(edits, pos)
 			}
-			print(f, m[f])
 		}
-		if found {
+		sort.Sort(edits)
+		print(edits)
+		if len(edits) > 0 {
 			os.Exit(1)
 		}
 	}
@@ -344,6 +341,29 @@ type step struct {
 
 type editSet map[token.Position]struct{}
 type fileToEditSet map[string]editSet
+
+type positionSlice []token.Position
+
+func (p positionSlice) Len() int {
+	return len(p)
+}
+
+func (p positionSlice) Less(i, j int) bool {
+	if p[i].Filename != p[j].Filename {
+		return p[i].Filename < p[j].Filename
+	}
+	if p[i].Line != p[j].Line {
+		return p[i].Line < p[j].Line
+	}
+	if p[i].Column != p[j].Column {
+		return p[i].Column < p[j].Column
+	}
+	return p[i].Column < p[j].Column
+}
+
+func (p positionSlice) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
+}
 
 type visitor struct {
 	pkg   *loader.PackageInfo
