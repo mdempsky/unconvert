@@ -104,20 +104,28 @@ func (e *editor) rewrite(f *ast.Expr) {
 	delete(e.edits, pos)
 }
 
-func print(name string, edits editSet) {
-	if len(edits) == 0 {
-		return
-	}
+var (
+	cr = []byte{'\r'}
+	nl = []byte{'\n'}
+)
 
-	buf, err := ioutil.ReadFile(name)
-	if err != nil {
-		log.Fatal(err)
-	}
+func print(conversions []token.Position) {
+	var file string
+	var lines [][]byte
 
-	for pos := range edits {
+	for _, pos := range conversions {
 		fmt.Printf("%s:%d:%d: unnecessary conversion\n", pos.Filename, pos.Line, pos.Column)
 		if *flagV {
-			line := lineForOffset(buf, pos.Offset)
+			if pos.Filename != file {
+				buf, err := ioutil.ReadFile(pos.Filename)
+				if err != nil {
+					log.Fatal(err)
+				}
+				file = pos.Filename
+				lines = bytes.Split(buf, nl)
+			}
+
+			line := bytes.TrimSuffix(lines[pos.Line], cr)
 			fmt.Printf("%s\n", line)
 			fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
 		}
@@ -142,22 +150,6 @@ func rub(buf []byte) []byte {
 		}
 	}
 	return res.Bytes()
-}
-
-func lineForOffset(buf []byte, off int) []byte {
-	sol := bytes.LastIndexByte(buf[:off], '\n')
-	if sol < 0 {
-		sol = 0
-	} else {
-		sol++
-	}
-	eol := bytes.IndexByte(buf[off:], '\n')
-	if eol < 0 {
-		eol = len(buf)
-	} else {
-		eol += off
-	}
-	return buf[sol:eol]
 }
 
 var (
@@ -211,19 +203,15 @@ func main() {
 		}
 		wg.Wait()
 	} else {
-		var files []string
-		for f := range m {
-			files = append(files, f)
-		}
-		sort.Strings(files)
-		found := false
-		for _, f := range files {
-			if len(m[f]) != 0 {
-				found = true
+		var conversions []token.Position
+		for _, positions := range m {
+			for pos := range positions {
+				conversions = append(conversions, pos)
 			}
-			print(f, m[f])
 		}
-		if found {
+		sort.Sort(byPosition(conversions))
+		print(conversions)
+		if len(conversions) > 0 {
 			os.Exit(1)
 		}
 	}
@@ -607,4 +595,24 @@ func asBuiltin(n ast.Expr, info *types.Info) (*types.Builtin, bool) {
 
 	b, ok := obj.(*types.Builtin)
 	return b, ok
+}
+
+type byPosition []token.Position
+
+func (p byPosition) Len() int {
+	return len(p)
+}
+
+func (p byPosition) Less(i, j int) bool {
+	if p[i].Filename != p[j].Filename {
+		return p[i].Filename < p[j].Filename
+	}
+	if p[i].Line != p[j].Line {
+		return p[i].Line < p[j].Line
+	}
+	return p[i].Column < p[j].Column
+}
+
+func (p byPosition) Swap(i, j int) {
+	p[i], p[j] = p[j], p[i]
 }
