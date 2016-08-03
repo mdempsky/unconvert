@@ -125,7 +125,7 @@ func print(conversions []token.Position) {
 				lines = bytes.Split(buf, nl)
 			}
 
-			line := bytes.TrimSuffix(lines[pos.Line], cr)
+			line := bytes.TrimSuffix(lines[pos.Line-1], cr)
 			fmt.Printf("%s\n", line)
 
 			// For files processed by cgo, Column is the
