@@ -127,7 +127,16 @@ func print(conversions []token.Position) {
 
 			line := bytes.TrimSuffix(lines[pos.Line], cr)
 			fmt.Printf("%s\n", line)
-			fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
+
+			// For files processed by cgo, Column is the
+			// column location after cgo processing, which
+			// may be different than the source column
+			// that we want here. In lieu of a better
+			// heuristic for detecting this case, at least
+			// avoid panicking if column is out of bounds.
+			if pos.Column <= len(line) {
+				fmt.Printf("%s^\n", rub(line[:pos.Column-1]))
+			}
 		}
 	}
 }
