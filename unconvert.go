@@ -402,8 +402,31 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		fmt.Println("Skipped a possible type conversion because of -safe at", v.file.Position(call.Pos()))
 		return
 	}
+	if v.isCgoCheckPointerContext() {
+		// cmd/cgo generates explicit type conversions that
+		// are often redundant when introducing
+		// _cgoCheckPointer calls (issue #16).  Users can't do
+		// anything about these, so skip over them.
+		return
+	}
 
 	v.edits[v.file.Position(call.Lparen)] = struct{}{}
+}
+
+func (v *visitor) isCgoCheckPointerContext() bool {
+	ctxt := &v.path[len(v.path)-2]
+	if ctxt.i != 1 {
+		return false
+	}
+	call, ok := ctxt.n.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := call.Fun.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	return ident.Name == "_cgoCheckPointer"
 }
 
 // isSafeContext reports whether the current context requires
