@@ -142,7 +142,7 @@ func print(conversions []token.Position) {
 	}
 }
 
-// Rub returns a copy of line with all non-whitespace characters replaced
+// rub returns a copy of line with all non-whitespace characters replaced
 // by spaces (like rubbing them out with white out).
 func rub(line string) string {
 	// TODO(mdempsky): Handle combining characters?
