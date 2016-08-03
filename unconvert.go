@@ -156,7 +156,7 @@ func rub(line string) string {
 		case width.EastAsianWide, width.EastAsianFullwidth:
 			res.WriteString("  ")
 		default:
-			res.WriteByte(' ')
+			res.WriteRune(' ')
 		}
 	}
 	return res.String()
