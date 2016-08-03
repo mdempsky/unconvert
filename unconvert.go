@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"runtime/pprof"
 	"sort"
+	"strings"
 	"sync"
 	"unicode"
 
@@ -104,14 +105,14 @@ func (e *editor) rewrite(f *ast.Expr) {
 	delete(e.edits, pos)
 }
 
-var (
-	cr = []byte{'\r'}
-	nl = []byte{'\n'}
+const (
+	cr = "\r"
+	nl = "\n"
 )
 
 func print(conversions []token.Position) {
 	var file string
-	var lines [][]byte
+	var lines []string
 
 	for _, pos := range conversions {
 		fmt.Printf("%s:%d:%d: unnecessary conversion\n", pos.Filename, pos.Line, pos.Column)
@@ -122,10 +123,10 @@ func print(conversions []token.Position) {
 					log.Fatal(err)
 				}
 				file = pos.Filename
-				lines = bytes.Split(buf, nl)
+				lines = strings.Split(string(buf), nl)
 			}
 
-			line := bytes.TrimSuffix(lines[pos.Line], cr)
+			line := strings.TrimSuffix(lines[pos.Line], cr)
 			fmt.Printf("%s\n", line)
 
 			// For files processed by cgo, Column is the
@@ -141,12 +142,12 @@ func print(conversions []token.Position) {
 	}
 }
 
-// Rub returns a copy of buf with all non-whitespace characters replaced
+// Rub returns a copy of line with all non-whitespace characters replaced
 // by spaces (like rubbing them out with white out).
-func rub(buf []byte) []byte {
+func rub(line string) string {
 	// TODO(mdempsky): Handle combining characters?
 	var res bytes.Buffer
-	for _, r := range string(buf) {
+	for _, r := range line {
 		if unicode.IsSpace(r) {
 			res.WriteRune(r)
 			continue
@@ -158,7 +159,7 @@ func rub(buf []byte) []byte {
 			res.WriteByte(' ')
 		}
 	}
-	return res.Bytes()
+	return res.String()
 }
 
 var (
