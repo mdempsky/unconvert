@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"runtime/pprof"
 	"sort"
+	"strings"
 	"sync"
 	"unicode"
 
@@ -166,8 +167,9 @@ var (
 	flagApply      = flag.Bool("apply", false, "apply edits to source files")
 	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
 	// TODO(mdempsky): Better description and maybe flag name.
-	flagSafe = flag.Bool("safe", false, "be more conservative (experimental)")
-	flagV    = flag.Bool("v", false, "verbose output")
+	flagSafe      = flag.Bool("safe", false, "be more conservative (experimental)")
+	flagV         = flag.Bool("v", false, "verbose output")
+	flagBuildTags = flag.String("tags", "", "a space-separated list of build tags. see also 'go build' option for details")
 )
 
 func usage() {
@@ -195,9 +197,9 @@ func main() {
 
 	var m fileToEditSet
 	if *flagAll {
-		m = mergeEdits(importPaths)
+		m = mergeEdits(importPaths, *flagBuildTags)
 	} else {
-		m = computeEdits(importPaths, build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled)
+		m = computeEdits(importPaths, build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled, *flagBuildTags)
 	}
 
 	if *flagApply {
@@ -268,10 +270,10 @@ var plats = [...]struct {
 	{"windows", "amd64"},
 }
 
-func mergeEdits(importPaths []string) fileToEditSet {
+func mergeEdits(importPaths []string, buildTags string) fileToEditSet {
 	m := make(fileToEditSet)
 	for _, plat := range plats {
-		for f, e := range computeEdits(importPaths, plat.goos, plat.goarch, false) {
+		for f, e := range computeEdits(importPaths, plat.goos, plat.goarch, false, buildTags) {
 			if e0, ok := m[f]; ok {
 				for k := range e0 {
 					if _, ok := e[k]; !ok {
@@ -292,11 +294,15 @@ func (noImporter) Import(path string) (*types.Package, error) {
 	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
-func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileToEditSet {
+func computeEdits(importPaths []string, os, arch string, cgoEnabled bool, buildTags string) fileToEditSet {
 	ctxt := build.Default
 	ctxt.GOOS = os
 	ctxt.GOARCH = arch
 	ctxt.CgoEnabled = cgoEnabled
+
+	if 0 < len(buildTags) {
+		ctxt.BuildTags = strings.Fields(buildTags)
+	}
 
 	var conf loader.Config
 	conf.Build = &ctxt
