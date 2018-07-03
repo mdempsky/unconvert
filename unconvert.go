@@ -26,6 +26,7 @@ import (
 
 	"github.com/kisielk/gotool"
 	"golang.org/x/text/width"
+	"golang.org/x/tools/go/buildutil"
 	"golang.org/x/tools/go/loader"
 )
 
@@ -173,6 +174,10 @@ var (
 func usage() {
 	fmt.Fprintf(os.Stderr, "usage: unconvert [flags] [package ...]\n")
 	flag.PrintDefaults()
+}
+
+func init() {
+	flag.Var((*buildutil.TagsFlag)(&build.Default.BuildTags), "tags", buildutil.TagsFlagDoc)
 }
 
 func main() {
