@@ -167,8 +167,9 @@ var (
 	flagApply      = flag.Bool("apply", false, "apply edits to source files")
 	flagCPUProfile = flag.String("cpuprofile", "", "write CPU profile to file")
 	// TODO(mdempsky): Better description and maybe flag name.
-	flagSafe = flag.Bool("safe", false, "be more conservative (experimental)")
-	flagV    = flag.Bool("v", false, "verbose output")
+	flagSafe  = flag.Bool("safe", false, "be more conservative (experimental)")
+	flagV     = flag.Bool("v", false, "verbose output")
+	flagTests = flag.Bool("tests", true, "include test source files")
 )
 
 func usage() {
@@ -307,7 +308,11 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileTo
 	conf.Build = &ctxt
 	conf.TypeChecker.Importer = noImporter{}
 	for _, importPath := range importPaths {
-		conf.Import(importPath)
+		if *flagTests {
+			conf.ImportWithTests(importPath)
+		} else {
+			conf.Import(importPath)
+		}
 	}
 	prog, err := conf.Load()
 	if err != nil {
