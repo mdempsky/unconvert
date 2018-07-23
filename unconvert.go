@@ -410,7 +410,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 
-	v.edits[v.file.Position(call.Lparen)] = struct{}{}
+	v.edits[v.file.PositionFor(call.Lparen, false)] = struct{}{}
 }
 
 func (v *visitor) isCgoCheckPointerContext() bool {
