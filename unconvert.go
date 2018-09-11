@@ -24,10 +24,9 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/kisielk/gotool"
 	"golang.org/x/text/width"
 	"golang.org/x/tools/go/buildutil"
-	"golang.org/x/tools/go/loader"
+	"golang.org/x/tools/go/packages"
 )
 
 // Unnecessary conversions are identified by the position
@@ -195,10 +194,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	importPaths := gotool.ImportPaths(flag.Args())
-	if len(importPaths) == 0 {
-		return
-	}
+	importPaths := flag.Args()
 
 	var m fileToEditSet
 	if *flagAll {
@@ -293,29 +289,12 @@ func mergeEdits(importPaths []string) fileToEditSet {
 	return m
 }
 
-type noImporter struct{}
-
-func (noImporter) Import(path string) (*types.Package, error) {
-	panic("golang.org/x/tools/go/loader said this wouldn't be called")
-}
-
-func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileToEditSet {
-	ctxt := build.Default
-	ctxt.GOOS = os
-	ctxt.GOARCH = arch
-	ctxt.CgoEnabled = cgoEnabled
-
-	var conf loader.Config
-	conf.Build = &ctxt
-	conf.TypeChecker.Importer = noImporter{}
-	for _, importPath := range importPaths {
-		if *flagTests {
-			conf.ImportWithTests(importPath)
-		} else {
-			conf.Import(importPath)
-		}
-	}
-	prog, err := conf.Load()
+func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fileToEditSet {
+	pkgs, err := packages.Load(&packages.Config{
+		Mode:  packages.LoadSyntax,
+		Env:   append(os.Environ(), "GOOS="+osname, "GOARCH="+arch),
+		Tests: *flagTests,
+	}, importPaths...)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -324,17 +303,18 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileTo
 		file  string
 		edits editSet
 	}
+
 	ch := make(chan res)
 	var wg sync.WaitGroup
-	for _, pkg := range prog.InitialPackages() {
-		for _, file := range pkg.Files {
-			pkg, file := pkg, file
+	for _, pkg := range pkgs {
+		for i, file := range pkg.Syntax {
+			pkg, file, fileName := pkg, file, pkg.CompiledGoFiles[i]
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package), edits: make(editSet)}
+				v := visitor{pkg: pkg, file: file, edits: make(editSet)}
 				ast.Walk(&v, file)
-				ch <- res{v.file.Name(), v.edits}
+				ch <- res{fileName, v.edits}
 			}()
 		}
 	}
@@ -356,8 +336,8 @@ type step struct {
 }
 
 type visitor struct {
-	pkg   *loader.PackageInfo
-	file  *token.File
+	pkg   *packages.Package
+	file  *ast.File
 	edits editSet
 	path  []step
 }
@@ -386,35 +366,32 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 	if len(call.Args) != 1 || call.Ellipsis != token.NoPos {
 		return
 	}
-	ft, ok := v.pkg.Types[call.Fun]
-	if !ok {
+	ft := v.pkg.TypesInfo.TypeOf(call.Fun)
+	if ft == nil {
 		fmt.Println("Missing type for function")
 		return
 	}
-	if !ft.IsType() {
-		// Function call; not a conversion.
-		return
-	}
-	at, ok := v.pkg.Types[call.Args[0]]
-	if !ok {
+
+	at := v.pkg.TypesInfo.TypeOf(call.Args[0])
+	if at == nil {
 		fmt.Println("Missing type for argument")
 		return
 	}
-	if !types.Identical(ft.Type, at.Type) {
+	if !types.Identical(ft, at) {
 		// A real conversion.
 		return
 	}
-	if !*flagFastMath && isFloatingPoint(ft.Type) && isOperation(call.Args[0]) && isOperation(v.path[len(v.path)-2].n) {
+	if !*flagFastMath && isFloatingPoint(ft) && isOperation(call.Args[0]) && isOperation(v.path[len(v.path)-2].n) {
 		// Go 1.9 gives different semantics to "T(a*b)+c" and "a*b+c".
 		return
 	}
-	if isUntypedValue(call.Args[0], &v.pkg.Info) {
+	if isUntypedValue(call.Args[0], v.pkg.TypesInfo) {
 		// Workaround golang.org/issue/13061.
 		return
 	}
-	if *flagSafe && !v.isSafeContext(at.Type) {
+	if *flagSafe && !v.isSafeContext(at) {
 		// TODO(mdempsky): Remove this message.
-		fmt.Println("Skipped a possible type conversion because of -safe at", v.file.Position(call.Pos()))
+		fmt.Println("Skipped a possible type conversion because of -safe at", v.pkg.Fset.Position(call.Pos()))
 		return
 	}
 	if v.isCgoCheckPointerContext() {
@@ -425,7 +402,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 
-	v.edits[v.file.Position(call.Lparen)] = struct{}{}
+	v.edits[v.pkg.Fset.Position(call.Lparen)] = struct{}{}
 }
 
 // isFloatingPointer reports whether t's underlying type is a floating
@@ -479,12 +456,12 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		// We're a conversion in the pos'th element of n.Rhs.
 		// Check that the corresponding element of n.Lhs is of type t.
-		lt, ok := v.pkg.Types[n.Lhs[pos]]
-		if !ok {
+		lt := v.pkg.TypesInfo.TypeOf(n.Lhs[pos])
+		if lt == nil {
 			fmt.Println("Missing type for LHS expression")
 			return false
 		}
-		return types.Identical(t, lt.Type)
+		return types.Identical(t, lt)
 	case *ast.BinaryExpr:
 		if n.Op == token.SHL || n.Op == token.SHR {
 			if ctxt.i == 1 {
@@ -501,24 +478,24 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		} else {
 			other = n.X
 		}
-		ot, ok := v.pkg.Types[other]
-		if !ok {
+		ot := v.pkg.TypesInfo.TypeOf(other)
+		if ot == nil {
 			fmt.Println("Missing type for other binop subexpr")
 			return false
 		}
-		return types.Identical(t, ot.Type)
+		return types.Identical(t, ot)
 	case *ast.CallExpr:
 		pos := ctxt.i - 1
 		if pos < 0 {
 			// Type conversion in the function subexpr is okay.
 			return true
 		}
-		ft, ok := v.pkg.Types[n.Fun]
-		if !ok {
+		ft := v.pkg.TypesInfo.TypeOf(n.Fun)
+		if ft == nil {
 			fmt.Println("Missing type for function expression")
 			return false
 		}
-		sig, ok := ft.Type.(*types.Signature)
+		sig, ok := ft.(*types.Signature)
 		if !ok {
 			// "Function" is either a type conversion (ok) or a builtin (ok?).
 			return true
@@ -532,7 +509,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		return types.Identical(t, pt)
 	case *ast.CompositeLit, *ast.KeyValueExpr:
-		fmt.Println("TODO(mdempsky): Compare against value type of composite literal type at", v.file.Position(n.Pos()))
+		fmt.Println("TODO(mdempsky): Compare against value type of composite literal type at", v.pkg.Fset.Position(n.Pos()))
 		return true
 	case *ast.ReturnStmt:
 		// TODO(mdempsky): Is there a better way to get the corresponding
@@ -566,12 +543,12 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		if typeExpr == nil {
 			fmt.Println(ctxt)
 		}
-		pt, ok := v.pkg.Types[typeExpr]
-		if !ok {
-			fmt.Println("Missing type for return parameter at", v.file.Position(n.Pos()))
+		pt := v.pkg.TypesInfo.TypeOf(typeExpr)
+		if pt == nil {
+			fmt.Println("Missing type for return parameter at", v.pkg.Fset.Position(n.Pos()))
 			return false
 		}
-		return types.Identical(t, pt.Type)
+		return types.Identical(t, pt)
 	case *ast.StarExpr, *ast.UnaryExpr:
 		// TODO(mdempsky): I think these are always safe.
 		return true
@@ -580,7 +557,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		return true
 	default:
 		// TODO(mdempsky): When can this happen?
-		fmt.Printf("... huh, %T at %v\n", n, v.file.Position(n.Pos()))
+		fmt.Printf("... huh, %T at %v\n", n, v.pkg.Fset.Position(n.Pos()))
 		return true
 	}
 }
