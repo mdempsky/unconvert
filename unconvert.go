@@ -27,7 +27,7 @@ import (
 	"github.com/kisielk/gotool"
 	"golang.org/x/text/width"
 	"golang.org/x/tools/go/buildutil"
-	"golang.org/x/tools/go/loader"
+	"golang.org/x/tools/go/packages"
 )
 
 // Unnecessary conversions are identified by the position
@@ -299,23 +299,18 @@ func (noImporter) Import(path string) (*types.Package, error) {
 	panic("golang.org/x/tools/go/loader said this wouldn't be called")
 }
 
-func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileToEditSet {
-	ctxt := build.Default
-	ctxt.GOOS = os
-	ctxt.GOARCH = arch
-	ctxt.CgoEnabled = cgoEnabled
-
-	var conf loader.Config
-	conf.Build = &ctxt
-	conf.TypeChecker.Importer = noImporter{}
-	for _, importPath := range importPaths {
-		if *flagTests {
-			conf.ImportWithTests(importPath)
-		} else {
-			conf.Import(importPath)
-		}
+func computeEdits(importPaths []string, osVal, arch string, cgoEnabled bool) fileToEditSet {
+	cgoEnabledVal := "0"
+	if cgoEnabled {
+		cgoEnabledVal = "1"
 	}
-	prog, err := conf.Load()
+
+	var conf packages.Config
+	conf.Mode = packages.LoadAllSyntax
+	conf.Tests = *flagTests
+	conf.Env = append(os.Environ(), "GOOS="+osVal, "GOARCH="+arch, "CGO_ENABLED="+cgoEnabledVal)
+
+	pkgs, err := packages.Load(&conf, importPaths...)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -326,13 +321,13 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileTo
 	}
 	ch := make(chan res)
 	var wg sync.WaitGroup
-	for _, pkg := range prog.InitialPackages() {
-		for _, file := range pkg.Files {
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Syntax {
 			pkg, file := pkg, file
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package), edits: make(editSet)}
+				v := visitor{pkg: pkg, file: pkg.Fset.File(file.Package), edits: make(editSet)}
 				ast.Walk(&v, file)
 				ch <- res{v.file.Name(), v.edits}
 			}()
@@ -356,7 +351,7 @@ type step struct {
 }
 
 type visitor struct {
-	pkg   *loader.PackageInfo
+	pkg   *packages.Package
 	file  *token.File
 	edits editSet
 	path  []step
@@ -386,7 +381,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 	if len(call.Args) != 1 || call.Ellipsis != token.NoPos {
 		return
 	}
-	ft, ok := v.pkg.Types[call.Fun]
+	ft, ok := v.pkg.TypesInfo.Types[call.Fun]
 	if !ok {
 		fmt.Println("Missing type for function")
 		return
@@ -395,7 +390,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// Function call; not a conversion.
 		return
 	}
-	at, ok := v.pkg.Types[call.Args[0]]
+	at, ok := v.pkg.TypesInfo.Types[call.Args[0]]
 	if !ok {
 		fmt.Println("Missing type for argument")
 		return
@@ -408,7 +403,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// Go 1.9 gives different semantics to "T(a*b)+c" and "a*b+c".
 		return
 	}
-	if isUntypedValue(call.Args[0], &v.pkg.Info) {
+	if isUntypedValue(call.Args[0], v.pkg.TypesInfo) {
 		// Workaround golang.org/issue/13061.
 		return
 	}
@@ -479,7 +474,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		// We're a conversion in the pos'th element of n.Rhs.
 		// Check that the corresponding element of n.Lhs is of type t.
-		lt, ok := v.pkg.Types[n.Lhs[pos]]
+		lt, ok := v.pkg.TypesInfo.Types[n.Lhs[pos]]
 		if !ok {
 			fmt.Println("Missing type for LHS expression")
 			return false
@@ -501,7 +496,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		} else {
 			other = n.X
 		}
-		ot, ok := v.pkg.Types[other]
+		ot, ok := v.pkg.TypesInfo.Types[other]
 		if !ok {
 			fmt.Println("Missing type for other binop subexpr")
 			return false
@@ -513,7 +508,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 			// Type conversion in the function subexpr is okay.
 			return true
 		}
-		ft, ok := v.pkg.Types[n.Fun]
+		ft, ok := v.pkg.TypesInfo.Types[n.Fun]
 		if !ok {
 			fmt.Println("Missing type for function expression")
 			return false
@@ -566,7 +561,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		if typeExpr == nil {
 			fmt.Println(ctxt)
 		}
-		pt, ok := v.pkg.Types[typeExpr]
+		pt, ok := v.pkg.TypesInfo.Types[typeExpr]
 		if !ok {
 			fmt.Println("Missing type for return parameter at", v.file.Position(n.Pos()))
 			return false
