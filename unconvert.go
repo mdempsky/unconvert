@@ -290,9 +290,14 @@ func mergeEdits(importPaths []string) fileToEditSet {
 }
 
 func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fileToEditSet {
+	cgoEnabledVal := "0"
+	if cgoEnabled {
+		cgoEnabledVal = "1"
+	}
+
 	pkgs, err := packages.Load(&packages.Config{
 		Mode:  packages.LoadSyntax,
-		Env:   append(os.Environ(), "GOOS="+osname, "GOARCH="+arch),
+		Env:   append(os.Environ(), "GOOS="+osname, "GOARCH="+arch, "CGO_ENABLED="+cgoEnabledVal),
 		Tests: *flagTests,
 	}, importPaths...)
 	if err != nil {
