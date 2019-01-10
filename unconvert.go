@@ -332,7 +332,7 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileTo
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{pkg: pkg, file: conf.Fset.File(file.Package), edits: make(editSet)}
+				v := visitor{info: &pkg.Info, file: conf.Fset.File(file.Package), edits: make(editSet)}
 				ast.Walk(&v, file)
 				ch <- res{v.file.Name(), v.edits}
 			}()
@@ -356,7 +356,7 @@ type step struct {
 }
 
 type visitor struct {
-	pkg   *loader.PackageInfo
+	info  *types.Info
 	file  *token.File
 	edits editSet
 	path  []step
@@ -386,7 +386,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 	if len(call.Args) != 1 || call.Ellipsis != token.NoPos {
 		return
 	}
-	ft, ok := v.pkg.Types[call.Fun]
+	ft, ok := v.info.Types[call.Fun]
 	if !ok {
 		fmt.Println("Missing type for function")
 		return
@@ -395,7 +395,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// Function call; not a conversion.
 		return
 	}
-	at, ok := v.pkg.Types[call.Args[0]]
+	at, ok := v.info.Types[call.Args[0]]
 	if !ok {
 		fmt.Println("Missing type for argument")
 		return
@@ -408,7 +408,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// Go 1.9 gives different semantics to "T(a*b)+c" and "a*b+c".
 		return
 	}
-	if isUntypedValue(call.Args[0], &v.pkg.Info) {
+	if isUntypedValue(call.Args[0], v.info) {
 		// Workaround golang.org/issue/13061.
 		return
 	}
@@ -479,7 +479,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		// We're a conversion in the pos'th element of n.Rhs.
 		// Check that the corresponding element of n.Lhs is of type t.
-		lt, ok := v.pkg.Types[n.Lhs[pos]]
+		lt, ok := v.info.Types[n.Lhs[pos]]
 		if !ok {
 			fmt.Println("Missing type for LHS expression")
 			return false
@@ -501,7 +501,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		} else {
 			other = n.X
 		}
-		ot, ok := v.pkg.Types[other]
+		ot, ok := v.info.Types[other]
 		if !ok {
 			fmt.Println("Missing type for other binop subexpr")
 			return false
@@ -513,7 +513,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 			// Type conversion in the function subexpr is okay.
 			return true
 		}
-		ft, ok := v.pkg.Types[n.Fun]
+		ft, ok := v.info.Types[n.Fun]
 		if !ok {
 			fmt.Println("Missing type for function expression")
 			return false
@@ -566,7 +566,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		if typeExpr == nil {
 			fmt.Println(ctxt)
 		}
-		pt, ok := v.pkg.Types[typeExpr]
+		pt, ok := v.info.Types[typeExpr]
 		if !ok {
 			fmt.Println("Missing type for return parameter at", v.file.Position(n.Pos()))
 			return false
