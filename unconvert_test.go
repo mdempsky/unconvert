@@ -39,11 +39,11 @@ func TestBinary(t *testing.T) {
 	SortAnnotations(expected)
 
 	need := map[Annotation]struct{}{}
-	for _, annotation := range got {
+	for _, annotation := range expected {
 		need[annotation] = struct{}{}
 	}
 
-	for _, annotation := range expected {
+	for _, annotation := range got {
 		_, ok := need[annotation]
 		if ok {
 			delete(need, annotation)
@@ -52,7 +52,7 @@ func TestBinary(t *testing.T) {
 		}
 	}
 
-	for _, annotation := range got {
+	for _, annotation := range expected {
 		_, ok := need[annotation]
 		if ok {
 			t.Errorf("missing: %v", annotation)
