@@ -7,6 +7,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"go/ast"
@@ -18,6 +19,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"os/exec"
 	"reflect"
 	"runtime/pprof"
 	"sort"
@@ -195,6 +197,9 @@ func main() {
 	}
 
 	importPaths := flag.Args()
+	if len(importPaths) == 0 {
+		return
+	}
 
 	var m fileToEditSet
 	if *flagAll {
@@ -229,52 +234,29 @@ func main() {
 	}
 }
 
-var plats = [...]struct {
-	goos, goarch string
-}{
-	// TODO(mdempsky): buildall.bash also builds linux-386-387 and linux-arm-arm5.
-	{"android", "386"},
-	{"android", "amd64"},
-	{"android", "arm"},
-	{"android", "arm64"},
-	{"darwin", "386"},
-	{"darwin", "amd64"},
-	{"darwin", "arm"},
-	{"darwin", "arm64"},
-	{"dragonfly", "amd64"},
-	{"freebsd", "386"},
-	{"freebsd", "amd64"},
-	{"freebsd", "arm"},
-	{"linux", "386"},
-	{"linux", "amd64"},
-	{"linux", "arm"},
-	{"linux", "arm64"},
-	{"linux", "mips64"},
-	{"linux", "mips64le"},
-	{"linux", "ppc64"},
-	{"linux", "ppc64le"},
-	{"linux", "s390x"},
-	{"nacl", "386"},
-	{"nacl", "amd64p32"},
-	{"nacl", "arm"},
-	{"netbsd", "386"},
-	{"netbsd", "amd64"},
-	{"netbsd", "arm"},
-	{"openbsd", "386"},
-	{"openbsd", "amd64"},
-	{"openbsd", "arm"},
-	{"plan9", "386"},
-	{"plan9", "amd64"},
-	{"plan9", "arm"},
-	{"solaris", "amd64"},
-	{"windows", "386"},
-	{"windows", "amd64"},
+type platform struct {
+	GOOS, GOARCH string
+}
+
+func allPlatforms() []platform {
+	out, err := exec.Command("go", "tool", "dist", "list", "-json").Output()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	var res []platform
+	err = json.Unmarshal(out, &res)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return res
 }
 
 func mergeEdits(importPaths []string) fileToEditSet {
 	m := make(fileToEditSet)
-	for _, plat := range plats {
-		for f, e := range computeEdits(importPaths, plat.goos, plat.goarch, false) {
+	for _, plat := range allPlatforms() {
+		for f, e := range computeEdits(importPaths, plat.GOOS, plat.GOARCH, false) {
 			if e0, ok := m[f]; ok {
 				for k := range e0 {
 					if _, ok := e[k]; !ok {
@@ -312,14 +294,14 @@ func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fi
 	ch := make(chan res)
 	var wg sync.WaitGroup
 	for _, pkg := range pkgs {
-		for i, file := range pkg.Syntax {
-			pkg, file, fileName := pkg, file, pkg.CompiledGoFiles[i]
+		for _, file := range pkg.Syntax {
+			pkg, file := pkg, file
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{pkg: pkg, file: file, edits: make(editSet)}
+				v := visitor{info: pkg.TypesInfo, file: pkg.Fset.File(file.Package), edits: make(editSet)}
 				ast.Walk(&v, file)
-				ch <- res{fileName, v.edits}
+				ch <- res{v.file.Name(), v.edits}
 			}()
 		}
 	}
@@ -341,8 +323,8 @@ type step struct {
 }
 
 type visitor struct {
-	pkg   *packages.Package
-	file  *ast.File
+	info  *types.Info
+	file  *token.File
 	edits editSet
 	path  []step
 }
@@ -371,32 +353,35 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 	if len(call.Args) != 1 || call.Ellipsis != token.NoPos {
 		return
 	}
-	ft := v.pkg.TypesInfo.TypeOf(call.Fun)
-	if ft == nil {
+	ft, ok := v.info.Types[call.Fun]
+	if !ok {
 		fmt.Println("Missing type for function")
 		return
 	}
-
-	at := v.pkg.TypesInfo.TypeOf(call.Args[0])
-	if at == nil {
+	if !ft.IsType() {
+		// Function call; not a conversion.
+		return
+	}
+	at, ok := v.info.Types[call.Args[0]]
+	if !ok {
 		fmt.Println("Missing type for argument")
 		return
 	}
-	if !types.Identical(ft, at) {
+	if !types.Identical(ft.Type, at.Type) {
 		// A real conversion.
 		return
 	}
-	if !*flagFastMath && isFloatingPoint(ft) && isOperation(call.Args[0]) && isOperation(v.path[len(v.path)-2].n) {
+	if !*flagFastMath && isFloatingPoint(ft.Type) && isOperation(call.Args[0]) && isOperation(v.path[len(v.path)-2].n) {
 		// Go 1.9 gives different semantics to "T(a*b)+c" and "a*b+c".
 		return
 	}
-	if isUntypedValue(call.Args[0], v.pkg.TypesInfo) {
+	if isUntypedValue(call.Args[0], v.info) {
 		// Workaround golang.org/issue/13061.
 		return
 	}
-	if *flagSafe && !v.isSafeContext(at) {
+	if *flagSafe && !v.isSafeContext(at.Type) {
 		// TODO(mdempsky): Remove this message.
-		fmt.Println("Skipped a possible type conversion because of -safe at", v.pkg.Fset.Position(call.Pos()))
+		fmt.Println("Skipped a possible type conversion because of -safe at", v.file.Position(call.Pos()))
 		return
 	}
 	if v.isCgoCheckPointerContext() {
@@ -407,7 +392,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 
-	v.edits[v.pkg.Fset.Position(call.Lparen)] = struct{}{}
+	v.edits[v.file.Position(call.Lparen)] = struct{}{}
 }
 
 // isFloatingPointer reports whether t's underlying type is a floating
@@ -461,12 +446,12 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		// We're a conversion in the pos'th element of n.Rhs.
 		// Check that the corresponding element of n.Lhs is of type t.
-		lt := v.pkg.TypesInfo.TypeOf(n.Lhs[pos])
-		if lt == nil {
+		lt, ok := v.info.Types[n.Lhs[pos]]
+		if !ok {
 			fmt.Println("Missing type for LHS expression")
 			return false
 		}
-		return types.Identical(t, lt)
+		return types.Identical(t, lt.Type)
 	case *ast.BinaryExpr:
 		if n.Op == token.SHL || n.Op == token.SHR {
 			if ctxt.i == 1 {
@@ -483,24 +468,24 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		} else {
 			other = n.X
 		}
-		ot := v.pkg.TypesInfo.TypeOf(other)
-		if ot == nil {
+		ot, ok := v.info.Types[other]
+		if !ok {
 			fmt.Println("Missing type for other binop subexpr")
 			return false
 		}
-		return types.Identical(t, ot)
+		return types.Identical(t, ot.Type)
 	case *ast.CallExpr:
 		pos := ctxt.i - 1
 		if pos < 0 {
 			// Type conversion in the function subexpr is okay.
 			return true
 		}
-		ft := v.pkg.TypesInfo.TypeOf(n.Fun)
-		if ft == nil {
+		ft, ok := v.info.Types[n.Fun]
+		if !ok {
 			fmt.Println("Missing type for function expression")
 			return false
 		}
-		sig, ok := ft.(*types.Signature)
+		sig, ok := ft.Type.(*types.Signature)
 		if !ok {
 			// "Function" is either a type conversion (ok) or a builtin (ok?).
 			return true
@@ -514,7 +499,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		}
 		return types.Identical(t, pt)
 	case *ast.CompositeLit, *ast.KeyValueExpr:
-		fmt.Println("TODO(mdempsky): Compare against value type of composite literal type at", v.pkg.Fset.Position(n.Pos()))
+		fmt.Println("TODO(mdempsky): Compare against value type of composite literal type at", v.file.Position(n.Pos()))
 		return true
 	case *ast.ReturnStmt:
 		// TODO(mdempsky): Is there a better way to get the corresponding
@@ -548,12 +533,12 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		if typeExpr == nil {
 			fmt.Println(ctxt)
 		}
-		pt := v.pkg.TypesInfo.TypeOf(typeExpr)
-		if pt == nil {
-			fmt.Println("Missing type for return parameter at", v.pkg.Fset.Position(n.Pos()))
+		pt, ok := v.info.Types[typeExpr]
+		if !ok {
+			fmt.Println("Missing type for return parameter at", v.file.Position(n.Pos()))
 			return false
 		}
-		return types.Identical(t, pt)
+		return types.Identical(t, pt.Type)
 	case *ast.StarExpr, *ast.UnaryExpr:
 		// TODO(mdempsky): I think these are always safe.
 		return true
@@ -562,7 +547,7 @@ func (v *visitor) isSafeContext(t types.Type) bool {
 		return true
 	default:
 		// TODO(mdempsky): When can this happen?
-		fmt.Printf("... huh, %T at %v\n", n, v.pkg.Fset.Position(n.Pos()))
+		fmt.Printf("... huh, %T at %v\n", n, v.file.Position(n.Pos()))
 		return true
 	}
 }
