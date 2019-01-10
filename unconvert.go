@@ -26,10 +26,9 @@ import (
 	"sync"
 	"unicode"
 
-	"github.com/kisielk/gotool"
 	"golang.org/x/text/width"
 	"golang.org/x/tools/go/buildutil"
-	"golang.org/x/tools/go/loader"
+	"golang.org/x/tools/go/packages"
 )
 
 // Unnecessary conversions are identified by the position
@@ -197,7 +196,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	importPaths := gotool.ImportPaths(flag.Args())
+	importPaths := flag.Args()
 	if len(importPaths) == 0 {
 		return
 	}
@@ -272,29 +271,17 @@ func mergeEdits(importPaths []string) fileToEditSet {
 	return m
 }
 
-type noImporter struct{}
-
-func (noImporter) Import(path string) (*types.Package, error) {
-	panic("golang.org/x/tools/go/loader said this wouldn't be called")
-}
-
-func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileToEditSet {
-	ctxt := build.Default
-	ctxt.GOOS = os
-	ctxt.GOARCH = arch
-	ctxt.CgoEnabled = cgoEnabled
-
-	var conf loader.Config
-	conf.Build = &ctxt
-	conf.TypeChecker.Importer = noImporter{}
-	for _, importPath := range importPaths {
-		if *flagTests {
-			conf.ImportWithTests(importPath)
-		} else {
-			conf.Import(importPath)
-		}
+func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fileToEditSet {
+	cgoEnabledVal := "0"
+	if cgoEnabled {
+		cgoEnabledVal = "1"
 	}
-	prog, err := conf.Load()
+
+	pkgs, err := packages.Load(&packages.Config{
+		Mode:  packages.LoadSyntax,
+		Env:   append(os.Environ(), "GOOS="+osname, "GOARCH="+arch, "CGO_ENABLED="+cgoEnabledVal),
+		Tests: *flagTests,
+	}, importPaths...)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -303,15 +290,16 @@ func computeEdits(importPaths []string, os, arch string, cgoEnabled bool) fileTo
 		file  string
 		edits editSet
 	}
+
 	ch := make(chan res)
 	var wg sync.WaitGroup
-	for _, pkg := range prog.InitialPackages() {
-		for _, file := range pkg.Files {
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Syntax {
 			pkg, file := pkg, file
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{info: &pkg.Info, file: conf.Fset.File(file.Package), edits: make(editSet)}
+				v := visitor{info: pkg.TypesInfo, file: pkg.Fset.File(file.Package), edits: make(editSet)}
 				ast.Walk(&v, file)
 				ch <- res{v.file.Name(), v.edits}
 			}()
