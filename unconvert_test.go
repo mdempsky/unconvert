@@ -10,17 +10,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
 )
 
 func TestBinary(t *testing.T) {
-	exepath, cleanup := build(t)
+	exePath, cleanup := build(t)
 	defer cleanup()
 
-	output, err := exec.Command(exepath, "./testdata").CombinedOutput()
+	output, err := exec.Command(exePath, "./testdata").CombinedOutput()
 	if err == nil {
 		t.Fatal("expected to quit with an error code")
 	}
@@ -35,22 +34,22 @@ func TestBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	SortAnnotations(got)
-	SortAnnotations(expected)
-
-	if len(got) != len(expected) {
-		t.Errorf("different number of results: got %v expected %v", len(got), len(expected))
+	need := map[Annotation]struct{}{}
+	for _, annotation := range got {
+		need[annotation] = struct{}{}
 	}
 
-	n := len(got)
-	if len(expected) < n {
-		n = len(expected)
-	}
-	for i, a := range got[:n] {
-		b := expected[i]
-		if a != b {
-			t.Errorf("got %q expected %q", a, b)
+	for _, annotation := range expected {
+		_, ok := need[annotation]
+		if ok {
+			delete(need, annotation)
+		} else {
+			t.Errorf("unexpected: %v", annotation)
 		}
+	}
+
+	for annotation := range need {
+		t.Errorf("missing: %v", annotation)
 	}
 }
 
@@ -61,19 +60,10 @@ type Annotation struct {
 }
 
 func (ann Annotation) String() string {
-	return fmt.Sprintf("%s:%d:0: %s", ann.File, ann.Line, ann.Message)
+	return fmt.Sprintf("%s:%d: %s", ann.File, ann.Line, ann.Message)
 }
 
-func SortAnnotations(xs []Annotation) {
-	sort.Slice(xs, func(i, k int) bool {
-		if xs[i].File == xs[k].File {
-			return xs[i].Line < xs[k].Line
-		}
-		return xs[i].File < xs[k].File
-	})
-}
-
-func ParseOutput(folder, output string) ([]Annotation, error) {
+func ParseOutput(dir, output string) ([]Annotation, error) {
 	var all []Annotation
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -81,12 +71,12 @@ func ParseOutput(folder, output string) ([]Annotation, error) {
 			continue
 		}
 
-		folderStart := strings.Index(line, folder)
+		folderStart := strings.Index(line, dir)
 		if folderStart < 0 {
 			continue
 		}
 
-		line = line[folderStart+len(folder)+1:]
+		line = line[folderStart+len(dir)+1:]
 		tokens := strings.SplitN(line, ":", 4)
 		if len(tokens) != 4 {
 			continue
@@ -113,6 +103,10 @@ func ParseDir(dir string) ([]Annotation, error) {
 		return nil, err
 	}
 	for _, file := range files {
+		if filepath.Ext(file.Name()) != ".go" {
+			continue
+		}
+
 		xs, err := ParseFile(filepath.Join(dir, file.Name()))
 		if err != nil {
 			return all, err
@@ -148,12 +142,12 @@ func ParseFile(file string) ([]Annotation, error) {
 	return all, nil
 }
 
-func build(t *testing.T) (exepath string, cleanup func()) {
+func build(t *testing.T) (exePath string, cleanup func()) {
 	dir, err := ioutil.TempDir("", "unconvert_test")
 	if err != nil {
 		t.Fatalf("failed to create tempdir: %v\n", err)
 	}
-	exepath = filepath.Join(dir, "test_unconvert.exe")
+	exePath = filepath.Join(dir, "test_unconvert.exe")
 
 	cleanup = func() {
 		err := os.RemoveAll(dir)
@@ -162,10 +156,10 @@ func build(t *testing.T) (exepath string, cleanup func()) {
 		}
 	}
 
-	output, err := exec.Command("go", "build", "-o", exepath, ".").CombinedOutput()
+	output, err := exec.Command("go", "build", "-o", exePath, ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build service program: %v\n%v", err, string(output))
 	}
 
-	return exepath, cleanup
+	return exePath, cleanup
 }
