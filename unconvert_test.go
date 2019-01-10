@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -34,6 +35,9 @@ func TestBinary(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	SortAnnotations(got)
+	SortAnnotations(expected)
+
 	need := map[Annotation]struct{}{}
 	for _, annotation := range got {
 		need[annotation] = struct{}{}
@@ -48,8 +52,11 @@ func TestBinary(t *testing.T) {
 		}
 	}
 
-	for annotation := range need {
-		t.Errorf("missing: %v", annotation)
+	for _, annotation := range got {
+		_, ok := need[annotation]
+		if ok {
+			t.Errorf("missing: %v", annotation)
+		}
 	}
 }
 
@@ -57,6 +64,19 @@ type Annotation struct {
 	File    string
 	Line    int
 	Message string
+}
+
+func SortAnnotations(annotations []Annotation) {
+	sort.Slice(annotations, func(i, j int) (x bool) {
+		ai, aj := &annotations[i], &annotations[j]
+		if ai.File != aj.File {
+			return ai.File < aj.File
+		}
+		if ai.Line != aj.Line {
+			return ai.Line < aj.Line
+		}
+		return ai.Message < aj.Message
+	})
 }
 
 func (ann Annotation) String() string {
