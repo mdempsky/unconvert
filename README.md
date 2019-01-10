@@ -1,13 +1,15 @@
-About:
+[![Build Status](https://travis-ci.org/mdempsky/unconvert.svg?branch=master)](https://travis-ci.org/mdempsky/unconvert)
+
+# About
 
 The unconvert program analyzes Go packages to identify unnecessary
 type conversions; i.e., expressions T(x) where x already has type T.
 
-Install:
+# Install
 
     $ go get github.com/mdempsky/unconvert
 
-Usage:
+# Usage
 
     $ unconvert -v bytes fmt
     GOROOT/src/bytes/reader.go:117:14: unnecessary conversion
@@ -17,7 +19,7 @@ Usage:
             p.fmt.integer(int64(v), 16, unsigned, udigits)
                                ^
 
-Flags:
+# Flags
 
 Using the -v flag, unconvert will also print the source line and a
 caret to indicate the unnecessary conversion's position therein.
