@@ -25,7 +25,7 @@ func _() {
 // Make sure we distinguish function calls from
 // conversion to function type.
 func _() {
-	type F func(F)
+	type F func(F) int
 	var f F
 
 	_ = F(F(nil)) //@ unnecessary conversion

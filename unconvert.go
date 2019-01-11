@@ -287,6 +287,7 @@ func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fi
 	if err != nil {
 		log.Fatal(err)
 	}
+	packages.PrintErrors(pkgs)
 
 	type res struct {
 		file  string
