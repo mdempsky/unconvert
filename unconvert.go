@@ -22,6 +22,7 @@ import (
 	"reflect"
 	"runtime/pprof"
 	"sort"
+	"strings"
 	"sync"
 	"unicode"
 
@@ -335,12 +336,20 @@ func computeEdits(importPaths []string, config []string) fileToEditSet {
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
 			pkg, file := pkg, file
+			tokenFile := pkg.Fset.File(file.Package)
+			filename := tokenFile.Position(file.Package).Filename
+
+			// Hack to recognize internal Go cache files.
+			if strings.HasSuffix(filename, "-d") && strings.Contains(filename, "/go-build/") {
+				continue
+			}
+
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				v := visitor{info: pkg.TypesInfo, file: pkg.Fset.File(file.Package), edits: make(editSet)}
+				v := visitor{info: pkg.TypesInfo, file: tokenFile, edits: make(editSet)}
 				ast.Walk(&v, file)
-				ch <- res{v.file.Position(file.Package).Filename, v.edits}
+				ch <- res{filename, v.edits}
 			}()
 		}
 	}

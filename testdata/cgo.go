@@ -18,3 +18,8 @@ func _() {
 	C.bar((*C.int)(nil))
 	C.bar((*C.int)((*C.int)(nil))) //@ unnecessary conversion
 }
+
+// Issue #39: don't warn about cgo-generated files.
+func _() interface{} {
+	return C.foo
+}

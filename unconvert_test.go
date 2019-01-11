@@ -25,7 +25,7 @@ func TestBinary(t *testing.T) {
 		t.Fatal("expected to quit with an error code")
 	}
 
-	got, err := ParseOutput("testdata", string(output))
+	got, err := ParseOutput(t, "testdata", string(output))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func (ann Annotation) String() string {
 	return fmt.Sprintf("%s:%d: %s", ann.File, ann.Line, ann.Message)
 }
 
-func ParseOutput(dir, output string) ([]Annotation, error) {
+func ParseOutput(t *testing.T, dir, output string) ([]Annotation, error) {
 	var all []Annotation
 	for _, line := range strings.Split(output, "\n") {
 		line = strings.TrimSpace(line)
@@ -93,12 +93,14 @@ func ParseOutput(dir, output string) ([]Annotation, error) {
 
 		folderStart := strings.Index(line, dir)
 		if folderStart < 0 {
+			t.Errorf("unexpected: %s", line)
 			continue
 		}
 
 		line = line[folderStart+len(dir)+1:]
 		tokens := strings.SplitN(line, ":", 4)
 		if len(tokens) != 4 {
+			t.Errorf("unexpected: %s", line)
 			continue
 		}
 
