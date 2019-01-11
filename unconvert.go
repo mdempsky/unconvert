@@ -201,7 +201,7 @@ func main() {
 	if *flagAll {
 		m = mergeEdits(importPaths)
 	} else {
-		m = computeEdits(importPaths, build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled)
+		m = computeEdits(importPaths, build.Default.GOOS, build.Default.GOARCH)
 	}
 
 	if *flagApply {
@@ -252,7 +252,7 @@ func allPlatforms() []platform {
 func mergeEdits(importPaths []string) fileToEditSet {
 	m := make(fileToEditSet)
 	for _, plat := range allPlatforms() {
-		for f, e := range computeEdits(importPaths, plat.GOOS, plat.GOARCH, false) {
+		for f, e := range computeEdits(importPaths, plat.GOOS, plat.GOARCH) {
 			if e0, ok := m[f]; ok {
 				for k := range e0 {
 					if _, ok := e[k]; !ok {
@@ -267,12 +267,7 @@ func mergeEdits(importPaths []string) fileToEditSet {
 	return m
 }
 
-func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fileToEditSet {
-	cgoEnabledVal := "0"
-	if cgoEnabled {
-		cgoEnabledVal = "1"
-	}
-
+func computeEdits(importPaths []string, goos, goarch string) fileToEditSet {
 	var buildFlags []string
 	if *flagTags != "" {
 		buildFlags = []string{"-tags", *flagTags}
@@ -280,7 +275,7 @@ func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fi
 
 	pkgs, err := packages.Load(&packages.Config{
 		Mode:       packages.LoadSyntax,
-		Env:        append(os.Environ(), "GOOS="+osname, "GOARCH="+arch, "CGO_ENABLED="+cgoEnabledVal),
+		Env:        append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch),
 		BuildFlags: buildFlags,
 		Tests:      *flagTests,
 	}, importPaths...)
