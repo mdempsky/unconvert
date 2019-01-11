@@ -34,6 +34,22 @@ import (
 
 type editSet map[token.Position]struct{}
 
+func (e editSet) add(pos token.Position) {
+	pos.Offset = 0
+	e[pos] = struct{}{}
+}
+
+func (e editSet) has(pos token.Position) bool {
+	pos.Offset = 0
+	_, ok := e[pos]
+	return ok
+}
+
+func (e editSet) remove(pos token.Position) {
+	pos.Offset = 0
+	delete(e, pos)
+}
+
 type fileToEditSet map[string]editSet
 
 func apply(file string, edits editSet) {
@@ -97,11 +113,11 @@ func (e *editor) rewrite(f *ast.Expr) {
 	}
 
 	pos := e.file.Position(call.Lparen)
-	if _, ok := e.edits[pos]; !ok {
+	if !e.edits.has(pos) {
 		return
 	}
 	*f = call.Args[0]
-	delete(e.edits, pos)
+	e.edits.remove(pos)
 }
 
 var (
@@ -319,7 +335,7 @@ func computeEdits(importPaths []string, config []string) fileToEditSet {
 				defer wg.Done()
 				v := visitor{info: pkg.TypesInfo, file: pkg.Fset.File(file.Package), edits: make(editSet)}
 				ast.Walk(&v, file)
-				ch <- res{v.file.Name(), v.edits}
+				ch <- res{v.file.Position(file.Package).Filename, v.edits}
 			}()
 		}
 	}
@@ -403,7 +419,7 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		return
 	}
 
-	v.edits[v.file.Position(call.Lparen)] = struct{}{}
+	v.edits.add(v.file.Position(call.Lparen))
 }
 
 // isFloatingPointer reports whether t's underlying type is a floating
