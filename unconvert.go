@@ -50,6 +50,15 @@ func (e editSet) remove(pos token.Position) {
 	delete(e, pos)
 }
 
+// intersect removes positions from e that are not present in x.
+func (e editSet) intersect(x editSet) {
+	for pos := range e {
+		if _, ok := x[pos]; !ok {
+			delete(e, pos)
+		}
+	}
+}
+
 type fileToEditSet map[string]editSet
 
 func apply(file string, edits editSet) {
@@ -289,11 +298,7 @@ func mergeEdits(importPaths []string, configs [][]string) fileToEditSet {
 	for _, config := range configs {
 		for f, e := range computeEdits(importPaths, config) {
 			if e0, ok := m[f]; ok {
-				for k := range e0 {
-					if _, ok := e[k]; !ok {
-						delete(e0, k)
-					}
-				}
+				e0.intersect(e)
 			} else {
 				m[f] = e
 			}
