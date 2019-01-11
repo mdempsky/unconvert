@@ -339,8 +339,9 @@ func computeEdits(importPaths []string, config []string) fileToEditSet {
 			tokenFile := pkg.Fset.File(file.Package)
 			filename := tokenFile.Position(file.Package).Filename
 
-			// Hack to recognize internal Go cache files.
-			if strings.HasSuffix(filename, "-d") && strings.Contains(filename, "/go-build/") {
+			// Hack to recognize cgo-generated files.
+			if (strings.HasSuffix(filename, "-d") || strings.HasSuffix(filename, "/_cgo_gotypes.go")) &&
+				strings.Contains(filename, "/go-build/") {
 				continue
 			}
 
