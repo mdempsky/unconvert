@@ -27,7 +27,6 @@ import (
 	"unicode"
 
 	"golang.org/x/text/width"
-	"golang.org/x/tools/go/buildutil"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -172,15 +171,12 @@ var (
 	flagV        = flag.Bool("v", false, "verbose output")
 	flagTests    = flag.Bool("tests", true, "include test source files")
 	flagFastMath = flag.Bool("fastmath", false, "remove conversions that force intermediate rounding")
+	flagTags     = flag.String("tags", "", "a space-separated list of build tags to consider satisfied during the build")
 )
 
 func usage() {
 	fmt.Fprintf(os.Stderr, "usage: unconvert [flags] [package ...]\n")
 	flag.PrintDefaults()
-}
-
-func init() {
-	flag.Var((*buildutil.TagsFlag)(&build.Default.BuildTags), "tags", buildutil.TagsFlagDoc)
 }
 
 func main() {
@@ -277,10 +273,16 @@ func computeEdits(importPaths []string, osname, arch string, cgoEnabled bool) fi
 		cgoEnabledVal = "1"
 	}
 
+	var buildFlags []string
+	if *flagTags != "" {
+		buildFlags = []string{"-tags", *flagTags}
+	}
+
 	pkgs, err := packages.Load(&packages.Config{
-		Mode:  packages.LoadSyntax,
-		Env:   append(os.Environ(), "GOOS="+osname, "GOARCH="+arch, "CGO_ENABLED="+cgoEnabledVal),
-		Tests: *flagTests,
+		Mode:       packages.LoadSyntax,
+		Env:        append(os.Environ(), "GOOS="+osname, "GOARCH="+arch, "CGO_ENABLED="+cgoEnabledVal),
+		BuildFlags: buildFlags,
+		Tests:      *flagTests,
 	}, importPaths...)
 	if err != nil {
 		log.Fatal(err)
