@@ -11,7 +11,6 @@ import (
 	"flag"
 	"fmt"
 	"go/ast"
-	"go/build"
 	"go/format"
 	"go/parser"
 	"go/token"
@@ -172,6 +171,7 @@ var (
 	flagTests    = flag.Bool("tests", true, "include test source files")
 	flagFastMath = flag.Bool("fastmath", false, "remove conversions that force intermediate rounding")
 	flagTags     = flag.String("tags", "", "a space-separated list of build tags to consider satisfied during the build")
+	flagConfigs  = flag.String("configs", "", "custom configs to run unconvert (experimental)")
 )
 
 func usage() {
@@ -197,12 +197,26 @@ func main() {
 		return
 	}
 
-	var m fileToEditSet
-	if *flagAll {
-		m = mergeEdits(importPaths)
+	var configs [][]string
+	if *flagConfigs != "" {
+		if os.Getenv("UNCONVERT_CONFIGS_EXPERIMENT") != "1" {
+			fmt.Println("WARNING: -configs is experimental.")
+			fmt.Println("Please comment at https://github.com/mdempsky/unconvert/issues/26")
+			fmt.Println("if you'd like to rely on this interface.")
+			fmt.Println("(Set UNCONVERT_CONFIGS_EXPERIMENT=1 to silence this warning.)")
+			fmt.Println()
+		}
+
+		if err := json.Unmarshal([]byte(*flagConfigs), &configs); err != nil {
+			log.Fatal(err)
+		}
+	} else if *flagAll {
+		configs = allConfigs()
 	} else {
-		m = computeEdits(importPaths, build.Default.GOOS, build.Default.GOARCH)
+		configs = [][]string{nil}
 	}
+
+	m := mergeEdits(importPaths, configs)
 
 	if *flagApply {
 		var wg sync.WaitGroup
@@ -230,29 +244,34 @@ func main() {
 	}
 }
 
-type platform struct {
-	GOOS, GOARCH string
-}
-
-func allPlatforms() []platform {
+func allConfigs() [][]string {
 	out, err := exec.Command("go", "tool", "dist", "list", "-json").Output()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	var res []platform
-	err = json.Unmarshal(out, &res)
+	var platforms []struct {
+		GOOS, GOARCH string
+	}
+	err = json.Unmarshal(out, &platforms)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	var res [][]string
+	for _, platform := range platforms {
+		res = append(res, []string{
+			"GOOS=" + platform.GOOS,
+			"GOARCH=" + platform.GOARCH,
+		})
+	}
 	return res
 }
 
-func mergeEdits(importPaths []string) fileToEditSet {
+func mergeEdits(importPaths []string, configs [][]string) fileToEditSet {
 	m := make(fileToEditSet)
-	for _, plat := range allPlatforms() {
-		for f, e := range computeEdits(importPaths, plat.GOOS, plat.GOARCH) {
+	for _, config := range configs {
+		for f, e := range computeEdits(importPaths, config) {
 			if e0, ok := m[f]; ok {
 				for k := range e0 {
 					if _, ok := e[k]; !ok {
@@ -267,7 +286,8 @@ func mergeEdits(importPaths []string) fileToEditSet {
 	return m
 }
 
-func computeEdits(importPaths []string, goos, goarch string) fileToEditSet {
+func computeEdits(importPaths []string, config []string) fileToEditSet {
+	// TODO(mdempsky): Move into config?
 	var buildFlags []string
 	if *flagTags != "" {
 		buildFlags = []string{"-tags", *flagTags}
@@ -275,7 +295,7 @@ func computeEdits(importPaths []string, goos, goarch string) fileToEditSet {
 
 	pkgs, err := packages.Load(&packages.Config{
 		Mode:       packages.LoadSyntax,
-		Env:        append(os.Environ(), "GOOS="+goos, "GOARCH="+goarch),
+		Env:        append(os.Environ(), config...),
 		BuildFlags: buildFlags,
 		Tests:      *flagTests,
 	}, importPaths...)
