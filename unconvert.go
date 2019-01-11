@@ -200,7 +200,7 @@ func main() {
 	var configs [][]string
 	if *flagConfigs != "" {
 		if os.Getenv("UNCONVERT_CONFIGS_EXPERIMENT") != "1" {
-			fmt.Println("WARNING: -configs is experimental.")
+			fmt.Println("WARNING: -configs is experimental and subject to change without notice.")
 			fmt.Println("Please comment at https://github.com/mdempsky/unconvert/issues/26")
 			fmt.Println("if you'd like to rely on this interface.")
 			fmt.Println("(Set UNCONVERT_CONFIGS_EXPERIMENT=1 to silence this warning.)")
