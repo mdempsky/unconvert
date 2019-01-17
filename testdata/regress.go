@@ -36,11 +36,17 @@ func _() {
 // prevent fusing floating-point operation.
 // TODO(mdempsky): Test -fastmath=true.
 func _() {
-	var f1, f2, f3 float64
-	_ = float64(f1 + f2) //@ unnecessary conversion
+	var f1, f2, f3, ftmp float64
 	_ = f1 + float64(f2*f3)
+	ftmp = float64(f2 * f3)
+	_ = f1 + ftmp
+	ftmp = f2 * f3
+	_ = f1 + float64(ftmp)
 
-	var c1, c2, c3 complex128
-	_ = complex128(c1 + c2) //@ unnecessary conversion
+	var c1, c2, c3, ctmp complex128
 	_ = c1 + complex128(c2*c3)
+	ctmp = complex128(c2 * c3)
+	_ = c1 + ctmp
+	ctmp = c2 * c3
+	_ = c1 + complex128(ctmp)
 }

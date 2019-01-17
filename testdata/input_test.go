@@ -29,26 +29,27 @@ func Basic() {
 	var vuint8 uint8
 	var vuintptr uintptr
 
-	_ = bool(vbool)             //@ unnecessary conversion
-	_ = byte(vbyte)             //@ unnecessary conversion
-	_ = complex128(vcomplex128) //@ unnecessary conversion
-	_ = complex64(vcomplex64)   //@ unnecessary conversion
-	_ = error(verror)           //@ unnecessary conversion
-	_ = float32(vfloat32)       //@ unnecessary conversion
-	_ = float64(vfloat64)       //@ unnecessary conversion
-	_ = int(vint)               //@ unnecessary conversion
-	_ = int16(vint16)           //@ unnecessary conversion
-	_ = int32(vint32)           //@ unnecessary conversion
-	_ = int64(vint64)           //@ unnecessary conversion
-	_ = int8(vint8)             //@ unnecessary conversion
-	_ = rune(vrune)             //@ unnecessary conversion
-	_ = string(vstring)         //@ unnecessary conversion
-	_ = uint(vuint)             //@ unnecessary conversion
-	_ = uint16(vuint16)         //@ unnecessary conversion
-	_ = uint32(vuint32)         //@ unnecessary conversion
-	_ = uint64(vuint64)         //@ unnecessary conversion
-	_ = uint8(vuint8)           //@ unnecessary conversion
-	_ = uintptr(vuintptr)       //@ unnecessary conversion
+	_ = bool(vbool)       //@ unnecessary conversion
+	_ = byte(vbyte)       //@ unnecessary conversion
+	_ = error(verror)     //@ unnecessary conversion
+	_ = int(vint)         //@ unnecessary conversion
+	_ = int16(vint16)     //@ unnecessary conversion
+	_ = int32(vint32)     //@ unnecessary conversion
+	_ = int64(vint64)     //@ unnecessary conversion
+	_ = int8(vint8)       //@ unnecessary conversion
+	_ = rune(vrune)       //@ unnecessary conversion
+	_ = string(vstring)   //@ unnecessary conversion
+	_ = uint(vuint)       //@ unnecessary conversion
+	_ = uint16(vuint16)   //@ unnecessary conversion
+	_ = uint32(vuint32)   //@ unnecessary conversion
+	_ = uint64(vuint64)   //@ unnecessary conversion
+	_ = uint8(vuint8)     //@ unnecessary conversion
+	_ = uintptr(vuintptr) //@ unnecessary conversion
+
+	_ = float32(vfloat32)
+	_ = float64(vfloat64)
+	_ = complex128(vcomplex128)
+	_ = complex64(vcomplex64)
 
 	// Pointers
 	_ = (*bool)(&vbool)             //@ unnecessary conversion

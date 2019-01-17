@@ -420,8 +420,10 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// A real conversion.
 		return
 	}
-	if !*flagFastMath && isFloatingPoint(ft.Type) && isOperation(call.Args[0]) && isOperation(v.path[len(v.path)-2].n) {
-		// Go 1.9 gives different semantics to "T(a*b)+c" and "a*b+c".
+	if !*flagFastMath && isFloatingPoint(ft.Type) {
+		// As of Go 1.9, explicit floating-point type
+		// conversions are always significant because they
+		// force rounding and prevent operation fusing.
 		return
 	}
 	if isUntypedValue(call.Args[0], v.info) {
@@ -442,15 +444,6 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 func isFloatingPoint(t types.Type) bool {
 	ut, ok := t.Underlying().(*types.Basic)
 	return ok && ut.Info()&(types.IsFloat|types.IsComplex) != 0
-}
-
-// isOperation reports whether n is an arithmetic operation expression.
-func isOperation(n ast.Node) bool {
-	switch n.(type) {
-	case *ast.BinaryExpr, *ast.UnaryExpr:
-		return true
-	}
-	return false
 }
 
 // isSafeContext reports whether the current context requires
