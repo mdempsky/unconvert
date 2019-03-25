@@ -4,3 +4,6 @@ go:
   - 1.12.x
   - 1.11.x
   - master
+
+env:
+  - GO111MODULE=on
