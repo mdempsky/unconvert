@@ -219,9 +219,6 @@ func main() {
 	}
 
 	importPaths := flag.Args()
-	if len(importPaths) == 0 {
-		return
-	}
 
 	var configs [][]string
 	if *flagConfigs != "" {

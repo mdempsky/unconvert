@@ -20,43 +20,61 @@ func TestBinary(t *testing.T) {
 	exePath, cleanup := build(t)
 	defer cleanup()
 
-	output, err := exec.Command(exePath, "./testdata").CombinedOutput()
-	if err == nil {
-		t.Fatal("expected to quit with an error code")
+	tests := []struct {
+		name    string
+		workdir string
+		args    []string
+	}{
+		{"relative", ".", []string{"./testdata"}},
+		{"dot", "./testdata", []string{"."}},
+		{"no-args", "./testdata", []string{}},
 	}
 
-	got, err := ParseOutput(t, "testdata", string(output))
-	if err != nil {
-		t.Fatal(err)
-	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := exec.Command(exePath, test.args...)
+			cmd.Dir = test.workdir
 
-	expected, err := ParseDir("testdata")
-	if err != nil {
-		t.Fatal(err)
-	}
+			output, err := cmd.CombinedOutput()
+			if err == nil {
+				t.Fatal("expected to quit with an error code")
+			}
+			t.Log(string(output))
 
-	SortAnnotations(got)
-	SortAnnotations(expected)
+			got, err := ParseOutput(t, "testdata", string(output))
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	need := map[Annotation]struct{}{}
-	for _, annotation := range expected {
-		need[annotation] = struct{}{}
-	}
+			expected, err := ParseDir("testdata")
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	for _, annotation := range got {
-		_, ok := need[annotation]
-		if ok {
-			delete(need, annotation)
-		} else {
-			t.Errorf("unexpected: %v", annotation)
-		}
-	}
+			SortAnnotations(got)
+			SortAnnotations(expected)
 
-	for _, annotation := range expected {
-		_, ok := need[annotation]
-		if ok {
-			t.Errorf("missing: %v", annotation)
-		}
+			need := map[Annotation]struct{}{}
+			for _, annotation := range expected {
+				need[annotation] = struct{}{}
+			}
+
+			for _, annotation := range got {
+				_, ok := need[annotation]
+				if ok {
+					delete(need, annotation)
+				} else {
+					t.Errorf("unexpected: %v", annotation)
+				}
+			}
+
+			for _, annotation := range expected {
+				_, ok := need[annotation]
+				if ok {
+					t.Errorf("missing: %v", annotation)
+				}
+			}
+		})
 	}
 }
 
