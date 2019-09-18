@@ -28,6 +28,7 @@ func TestBinary(t *testing.T) {
 		{"relative", ".", []string{"./testdata"}},
 		{"dot", "./testdata", []string{"."}},
 		{"no-args", "./testdata", []string{}},
+		{"pattern", "./testdata", []string{"./..."}},
 	}
 
 	for _, test := range tests {
