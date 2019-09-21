@@ -218,10 +218,7 @@ func main() {
 		defer pprof.StopCPUProfile()
 	}
 
-	importPaths := flag.Args()
-	if len(importPaths) == 0 {
-		return
-	}
+	patterns := flag.Args() // 0 or more import path patterns.
 
 	var configs [][]string
 	if *flagConfigs != "" {
@@ -242,7 +239,7 @@ func main() {
 		configs = [][]string{nil}
 	}
 
-	m := mergeEdits(importPaths, configs)
+	m := mergeEdits(patterns, configs)
 
 	if *flagApply {
 		var wg sync.WaitGroup
@@ -294,10 +291,10 @@ func allConfigs() [][]string {
 	return res
 }
 
-func mergeEdits(importPaths []string, configs [][]string) fileToEditSet {
+func mergeEdits(patterns []string, configs [][]string) fileToEditSet {
 	m := make(fileToEditSet)
 	for _, config := range configs {
-		for f, e := range computeEdits(importPaths, config) {
+		for f, e := range computeEdits(patterns, config) {
 			if e0, ok := m[f]; ok {
 				e0.intersect(e)
 			} else {
@@ -308,7 +305,7 @@ func mergeEdits(importPaths []string, configs [][]string) fileToEditSet {
 	return m
 }
 
-func computeEdits(importPaths []string, config []string) fileToEditSet {
+func computeEdits(patterns []string, config []string) fileToEditSet {
 	// TODO(mdempsky): Move into config?
 	var buildFlags []string
 	if *flagTags != "" {
@@ -320,7 +317,7 @@ func computeEdits(importPaths []string, config []string) fileToEditSet {
 		Env:        append(os.Environ(), config...),
 		BuildFlags: buildFlags,
 		Tests:      *flagTests,
-	}, importPaths...)
+	}, patterns...)
 	if err != nil {
 		log.Fatal(err)
 	}
