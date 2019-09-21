@@ -21,9 +21,9 @@ func TestBinary(t *testing.T) {
 	defer cleanup()
 
 	tests := []struct {
-		name    string
-		workdir string
-		args    []string
+		name string
+		dir  string
+		args []string
 	}{
 		{"relative", ".", []string{"./testdata"}},
 		{"dot", "./testdata", []string{"."}},
@@ -34,7 +34,7 @@ func TestBinary(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cmd := exec.Command(exePath, test.args...)
-			cmd.Dir = test.workdir
+			cmd.Dir = test.dir
 
 			output, err := cmd.CombinedOutput()
 			if err == nil {
