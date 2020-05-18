@@ -198,6 +198,7 @@ var (
 	flagFastMath = flag.Bool("fastmath", false, "remove conversions that force intermediate rounding")
 	flagTags     = flag.String("tags", "", "a space-separated list of build tags to consider satisfied during the build")
 	flagConfigs  = flag.String("configs", "", "custom configs to run unconvert (experimental)")
+	flagDir      = flag.String("dir", "", "directory to run from")
 )
 
 func usage() {
@@ -239,7 +240,7 @@ func main() {
 		configs = [][]string{nil}
 	}
 
-	m := mergeEdits(patterns, configs)
+	m := mergeEdits(patterns, *flagDir, configs)
 
 	if *flagApply {
 		var wg sync.WaitGroup
@@ -291,10 +292,10 @@ func allConfigs() [][]string {
 	return res
 }
 
-func mergeEdits(patterns []string, configs [][]string) fileToEditSet {
+func mergeEdits(patterns []string, dir string, configs [][]string) fileToEditSet {
 	m := make(fileToEditSet)
 	for _, config := range configs {
-		for f, e := range computeEdits(patterns, config) {
+		for f, e := range computeEdits(patterns, dir, config) {
 			if e0, ok := m[f]; ok {
 				e0.intersect(e)
 			} else {
@@ -305,7 +306,7 @@ func mergeEdits(patterns []string, configs [][]string) fileToEditSet {
 	return m
 }
 
-func computeEdits(patterns []string, config []string) fileToEditSet {
+func computeEdits(patterns []string, dir string, config []string) fileToEditSet {
 	// TODO(mdempsky): Move into config?
 	var buildFlags []string
 	if *flagTags != "" {
@@ -313,6 +314,7 @@ func computeEdits(patterns []string, config []string) fileToEditSet {
 	}
 
 	pkgs, err := packages.Load(&packages.Config{
+		Dir:        dir,
 		Mode:       packages.LoadSyntax,
 		Env:        append(os.Environ(), config...),
 		BuildFlags: buildFlags,
