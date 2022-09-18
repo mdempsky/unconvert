@@ -5,7 +5,7 @@ type conversions; i.e., expressions T(x) where x already has type T.
 
 # Install
 
-    $ go get github.com/mdempsky/unconvert
+    go install github.com/mdempsky/unconvert@latest
 
 # Usage
 
