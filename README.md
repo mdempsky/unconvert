@@ -1,5 +1,3 @@
-[![Build Status](https://travis-ci.org/mdempsky/unconvert.svg?branch=master)](https://travis-ci.org/mdempsky/unconvert)
-
 # About
 
 The unconvert program analyzes Go packages to identify unnecessary
