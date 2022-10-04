@@ -313,7 +313,7 @@ func computeEdits(patterns []string, config []string) fileToEditSet {
 	}
 
 	pkgs, err := packages.Load(&packages.Config{
-		Mode:       packages.LoadSyntax,
+		Mode:       packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo,
 		Env:        append(os.Environ(), config...),
 		BuildFlags: buildFlags,
 		Tests:      *flagTests,
