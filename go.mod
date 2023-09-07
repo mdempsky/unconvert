@@ -1,6 +1,6 @@
 module github.com/mdempsky/unconvert
 
-go 1.18
+go 1.20
 
 require (
 	golang.org/x/text v0.13.0
