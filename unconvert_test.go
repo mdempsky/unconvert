@@ -6,7 +6,6 @@ package main_test
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,8 +16,7 @@ import (
 )
 
 func TestBinary(t *testing.T) {
-	exePath, cleanup := build(t)
-	defer cleanup()
+	exePath := build(t)
 
 	tests := []struct {
 		name string
@@ -139,7 +137,7 @@ func ParseOutput(t *testing.T, dir, output string) ([]Annotation, error) {
 
 func ParseDir(dir string) ([]Annotation, error) {
 	var all []Annotation
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -159,7 +157,7 @@ func ParseDir(dir string) ([]Annotation, error) {
 }
 
 func ParseFile(file string) ([]Annotation, error) {
-	data, err := ioutil.ReadFile(file)
+	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err
 	}
@@ -183,24 +181,13 @@ func ParseFile(file string) ([]Annotation, error) {
 	return all, nil
 }
 
-func build(t *testing.T) (exePath string, cleanup func()) {
-	dir, err := ioutil.TempDir("", "unconvert_test")
-	if err != nil {
-		t.Fatalf("failed to create tempdir: %v\n", err)
-	}
-	exePath = filepath.Join(dir, "test_unconvert.exe")
-
-	cleanup = func() {
-		err := os.RemoveAll(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
+func build(t *testing.T) (exePath string) {
+	exePath = filepath.Join(t.TempDir(), "test_unconvert.exe")
 
 	output, err := exec.Command("go", "build", "-o", exePath, ".").CombinedOutput()
 	if err != nil {
 		t.Fatalf("failed to build service program: %v\n%v", err, string(output))
 	}
 
-	return exePath, cleanup
+	return exePath
 }
