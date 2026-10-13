@@ -243,12 +243,9 @@ func main() {
 	if *flagApply {
 		var wg sync.WaitGroup
 		for f, e := range m {
-			wg.Add(1)
-			f, e := f, e
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				apply(f, e)
-			}()
+			})
 		}
 		wg.Wait()
 	} else {
@@ -340,13 +337,11 @@ func computeEdits(patterns []string, config []string) fileToEditSet {
 				continue
 			}
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				v := visitor{info: pkg.TypesInfo, file: tokenFile, edits: make(editSet)}
 				ast.Walk(&v, file)
 				ch <- res{filename, v.edits}
-			}()
+			})
 		}
 	}
 	go func() {
