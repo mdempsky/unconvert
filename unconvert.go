@@ -410,6 +410,14 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 		// A real conversion.
 		return
 	}
+	// A conversion may be intentional even though the types are
+	// identical: a type alias name can carry semantic meaning (for
+	// example, converting between int32 and rune). Don't flag
+	// conversions whose destination type is spelled with a different
+	// name than the source type.
+	if name, ok := v.spelledFunName(call.Fun); ok && name != spelledArgName(at.Type) {
+		return
+	}
 	if !*flagFastMath && isFloatingPoint(ft.Type) {
 		// As of Go 1.9, explicit floating-point type
 		// conversions are always significant because they
@@ -434,6 +442,34 @@ func (v *visitor) unconvert(call *ast.CallExpr) {
 func isFloatingPoint(t types.Type) bool {
 	ut, ok := t.Underlying().(*types.Basic)
 	return ok && ut.Info()&(types.IsFloat|types.IsComplex) != 0
+}
+
+// spelledFunName returns the name of the conversion's destination
+// type, if it is spelled as a simple identifier.
+func (v *visitor) spelledFunName(fun ast.Expr) (string, bool) {
+	ident, ok := fun.(*ast.Ident)
+	if !ok {
+		return "", false
+	}
+	obj, ok := v.info.Uses[ident]
+	if !ok {
+		return "", false
+	}
+	return obj.Name(), true
+}
+
+// spelledArgName returns the name used to refer to t: the type's own
+// name for named types and type aliases, or the type's string
+// representation otherwise.
+func spelledArgName(t types.Type) string {
+	switch t := t.(type) {
+	case *types.Alias:
+		return t.Obj().Name()
+	case *types.Named:
+		return t.Obj().Name()
+	default:
+		return t.String()
+	}
 }
 
 // isSafeContext reports whether the current context requires
